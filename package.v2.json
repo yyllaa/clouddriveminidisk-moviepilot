@@ -1,0 +1,14 @@
+{
+  "CloudDriveMiniDisk": {
+    "name": "CloudDrive Mini Storage",
+    "description": "Use the clouddrive-mini HTTP API as a custom MoviePilot storage backend.",
+    "labels": "storage",
+    "version": "0.1.0",
+    "icon": "Cloudrive_A.png",
+    "author": "zztt",
+    "level": 1,
+    "history": {
+      "v0.1.0": "Initial version with browse, detail, mkdir, delete, rename, download and chunked upload support."
+    }
+  }
+}
