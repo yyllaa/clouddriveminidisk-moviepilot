@@ -3,11 +3,12 @@
     "name": "CloudDrive Mini存储",
     "description": "使用 clouddrive-mini 项目 HTTP API 作为 MoviePilot 自定义存储。",
     "labels": "存储",
-    "version": "0.1.0",
+    "version": "0.1.1",
     "icon": "Cloudrive_A.png",
     "author": "yyllaa",
     "level": 1,
     "history": {
+      "v0.1.1": "支持在插件配置页自动侦测并选择 account_id，保留原有配置可直接升级。",
       "v0.1.0": "初始版本：接入 clouddrive-mini 作为自定义存储，支持浏览、详情、建目录、删除、重命名、下载和分片上传。"
     }
   }
