@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 import hashlib
+import json
 from pathlib import Path, PurePosixPath
 from time import sleep, time
 from typing import Any, Dict, List, Optional
+from urllib.parse import quote
 
 import requests
 
@@ -100,6 +102,59 @@ class CloudDriveMiniApi:
             self.session.close()
         except Exception:
             pass
+
+    def _stringify_log_value(self, value: Any, *, limit: int = 600) -> str:
+        if isinstance(value, (dict, list, tuple)):
+            try:
+                text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+            except Exception:
+                text = repr(value)
+        else:
+            text = str(value)
+        if len(text) > limit:
+            return f"{text[:limit]}...(truncated)"
+        return text
+
+    def _upload_log(self, level: str, message: str, **fields: Any) -> None:
+        logger_fn = getattr(logger, level, logger.info)
+        if not fields:
+            logger_fn("【CloudDriveMiniUpload】%s", message)
+            return
+        rendered = ", ".join(
+            f"{key}={self._stringify_log_value(value)}"
+            for key, value in fields.items()
+            if value is not None
+        )
+        logger_fn("【CloudDriveMiniUpload】%s | %s", message, rendered)
+
+    def _should_log_upload_path(self, path: str) -> bool:
+        return str(path or "").strip() in {
+            "/api/tasks/upload/create",
+            "/api/tasks/upload/chunk",
+            "/api/tasks/detail",
+            "/api/files/upload",
+            "/api/family/upload",
+        }
+
+    def _summarize_upload_result(self, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        detail = data.get("detail", {}) if isinstance(data.get("detail"), dict) else {}
+        result = data.get("result", {}) if isinstance(data.get("result"), dict) else {}
+        summary: dict[str, Any] = {}
+        for key in ("status", "message", "task_id", "path", "name"):
+            value = data.get(key)
+            if value not in {None, ""}:
+                summary[key] = value
+        for key in ("target_name", "target_path", "requires_upload", "requires_block_hashes", "md5_block_size"):
+            value = detail.get(key)
+            if value not in {None, ""}:
+                summary[f"detail.{key}"] = value
+        for key in ("path", "name", "requires_upload", "rapid_upload"):
+            value = result.get(key)
+            if value not in {None, ""}:
+                summary[f"result.{key}"] = value
+        return summary or data
 
     def _endpoint(self, action: str) -> str:
         suffix = str(action or "").strip("/")
@@ -209,6 +264,15 @@ class CloudDriveMiniApi:
         request_payload = dict(payload or {})
         if request_payload and attach_account_id and self.account_id:
             request_payload.setdefault("account_id", self.account_id)
+        if self._should_log_upload_path(path):
+            self._upload_log(
+                "info",
+                "request_json start",
+                method=method.upper(),
+                path=path,
+                params=request_params,
+                payload=request_payload,
+            )
         response = self.session.request(
             method.upper(),
             f"{self.base_url}{path}",
@@ -217,6 +281,8 @@ class CloudDriveMiniApi:
             timeout=self.timeout,
         )
         if response.status_code == 401 and retry_auth:
+            if self._should_log_upload_path(path):
+                self._upload_log("warning", "request_json retry after 401", path=path, status_code=response.status_code)
             self._ensure_auth(force=True)
             return self._request_json(
                 method,
@@ -226,8 +292,18 @@ class CloudDriveMiniApi:
                 retry_auth=False,
                 attach_account_id=attach_account_id,
             )
+        if self._should_log_upload_path(path):
+            self._upload_log(
+                "info",
+                "request_json response",
+                path=path,
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type", ""),
+            )
         response.raise_for_status()
         data = response.json()
+        if self._should_log_upload_path(path):
+            self._upload_log("info", "request_json result", path=path, result=self._summarize_upload_result(data))
         if str(data.get("status", "") or "").strip().lower() == "error":
             raise CloudDriveMiniError(str(data.get("message") or f"{path} failed"))
         return data
@@ -281,6 +357,16 @@ class CloudDriveMiniApi:
         request_params = {key: value for key, value in (params or {}).items() if value not in {None, ""}}
         if attach_account_id and self.account_id:
             request_params.setdefault("account_id", self.account_id)
+        if self._should_log_upload_path(path):
+            self._upload_log(
+                "info",
+                "request_binary start",
+                method=method.upper(),
+                path=path,
+                params=request_params,
+                body_bytes=len(data or b""),
+                headers=headers or {},
+            )
         response = self.session.request(
             method.upper(),
             f"{self.base_url}{path}",
@@ -290,6 +376,8 @@ class CloudDriveMiniApi:
             timeout=self.timeout,
         )
         if response.status_code == 401 and retry_auth:
+            if self._should_log_upload_path(path):
+                self._upload_log("warning", "request_binary retry after 401", path=path, status_code=response.status_code)
             self._ensure_auth(force=True)
             return self._request_binary(
                 method,
@@ -300,8 +388,18 @@ class CloudDriveMiniApi:
                 retry_auth=False,
                 attach_account_id=attach_account_id,
             )
+        if self._should_log_upload_path(path):
+            self._upload_log(
+                "info",
+                "request_binary response",
+                path=path,
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type", ""),
+            )
         response.raise_for_status()
         result = response.json()
+        if self._should_log_upload_path(path):
+            self._upload_log("info", "request_binary result", path=path, result=self._summarize_upload_result(result))
         if str(result.get("status", "") or "").strip().lower() == "error":
             raise CloudDriveMiniError(str(result.get("message") or f"{path} failed"))
         return result
@@ -570,6 +668,21 @@ class CloudDriveMiniApi:
         md5_block_hashes: Optional[List[str]] = None,
         probe_only: bool = False,
     ) -> dict[str, Any]:
+        self._upload_log(
+            "info",
+            "create upload task",
+            filename=filename,
+            file_size=file_size,
+            remote_dir_path=remote_dir_path,
+            mode=self.mode,
+            chunk_size=self.upload_chunk_size,
+            probe_only=probe_only,
+            has_sha256=bool(content_hash),
+            has_sha1=bool(sha1),
+            has_md5=bool(md5),
+            md5_block_size=md5_block_size,
+            md5_block_count=len(list(md5_block_hashes or [])),
+        )
         return self._request_json(
             "POST",
             "/api/tasks/upload/create",
@@ -606,11 +719,13 @@ class CloudDriveMiniApi:
         file_size = int(local_path.stat().st_size or 0)
         if file_size <= 0:
             raise CloudDriveMiniError("upload body is empty")
+        encoded_filename = quote(filename, safe="")
+        encoded_remote_dir_path = quote(remote_dir_path, safe="/")
         headers = {
             "Content-Type": "application/octet-stream",
             "Content-Length": str(file_size),
-            "X-Filename": filename,
-            "X-Remote-Dir": remote_dir_path,
+            "X-Filename": encoded_filename,
+            "X-Remote-Dir": encoded_remote_dir_path,
             "X-Upload-Origin": "plugin",
         }
         normalized_digests = dict(digests or {})
@@ -621,9 +736,24 @@ class CloudDriveMiniApi:
             headers["X-Content-Sha1"] = str(normalized_digests.get("sha1") or "").strip()
         if str(normalized_digests.get("md5") or "").strip():
             headers["X-Content-Md5"] = str(normalized_digests.get("md5") or "").strip()
+        self._upload_log(
+            "info",
+            "direct upload start",
+            endpoint=endpoint,
+            filename=filename,
+            encoded_filename=encoded_filename,
+            remote_dir_path=remote_dir_path,
+            encoded_remote_dir_path=encoded_remote_dir_path,
+            file_size=file_size,
+            params=request_params,
+            has_sha256=bool(normalized_digests.get("sha256")),
+            has_sha1=bool(normalized_digests.get("sha1")),
+            has_md5=bool(normalized_digests.get("md5")),
+        )
         if progress_callback is not None:
             progress_callback(0)
         for attempt in range(2):
+            self._upload_log("info", "direct upload attempt", endpoint=endpoint, filename=filename, attempt=attempt + 1)
             with local_path.open("rb") as file_obj:
                 upload_stream = _ProgressFileReader(file_obj, file_size, progress_callback)
                 response = self.session.request(
@@ -635,14 +765,24 @@ class CloudDriveMiniApi:
                     timeout=max(self.timeout, 3600),
                 )
             if response.status_code == 401 and attempt == 0:
+                self._upload_log("warning", "direct upload retry after 401", endpoint=endpoint, filename=filename)
                 response.close()
                 self._ensure_auth(force=True)
                 if progress_callback is not None:
                     progress_callback(0)
                 continue
+            self._upload_log(
+                "info",
+                "direct upload response",
+                endpoint=endpoint,
+                filename=filename,
+                status_code=response.status_code,
+                content_type=response.headers.get("content-type", ""),
+            )
             response.raise_for_status()
             result = response.json()
             response.close()
+            self._upload_log("info", "direct upload result", endpoint=endpoint, filename=filename, result=self._summarize_upload_result(result))
             if str(result.get("status", "") or "").strip().lower() == "error":
                 raise CloudDriveMiniError(str(result.get("message") or f"{endpoint} failed"))
             if progress_callback is not None:
@@ -669,14 +809,19 @@ class CloudDriveMiniApi:
 
     def _wait_upload_complete(self, task_id: str, *, timeout_seconds: int = 3600) -> dict[str, Any]:
         deadline = time() + timeout_seconds
+        self._upload_log("info", "wait upload complete start", task_id=task_id, timeout_seconds=timeout_seconds)
         while time() < deadline:
             task = self._upload_task_detail(task_id)
             status = str(task.get("status") or "").strip().lower()
+            self._upload_log("debug", "wait upload complete poll", task_id=task_id, status=status, task=self._summarize_upload_result(task))
             if status == "success":
+                self._upload_log("info", "wait upload complete success", task_id=task_id, task=self._summarize_upload_result(task))
                 return task
             if status in {"error", "partial", "cancelled"}:
+                self._upload_log("error", "wait upload complete failed", task_id=task_id, task=self._summarize_upload_result(task))
                 raise CloudDriveMiniError(str(task.get("error_message") or f"upload task failed: {status}"))
             sleep(1)
+        self._upload_log("error", "wait upload complete timeout", task_id=task_id, timeout_seconds=timeout_seconds)
         raise CloudDriveMiniError("upload task timeout")
 
     def upload(self, fileitem: FileItem, path: Path, new_name: Optional[str] = None) -> Optional[FileItem]:
@@ -692,9 +837,32 @@ class CloudDriveMiniApi:
         target_marker = PurePosixPath(target_dir.path).joinpath(target_name).as_posix()
         progress_callback = _noop_progress_callback
         provider = self._current_provider()
+        self._upload_log(
+            "info",
+            "upload start",
+            local_path=str(local_path),
+            target_name=target_name,
+            target_dir_path=target_dir.path,
+            remote_dir_path=remote_dir_path,
+            file_size=file_size,
+            account_id=self.account_id or "(active)",
+            provider=provider,
+            mode=self.mode,
+            base_url=self.base_url,
+            root_path=self.root_path,
+        )
         digests: dict[str, str] = {}
         if self.mode == "personal" and provider in {"yun139", "unicom", "115", "clouddrive2"}:
             digests = self._file_digests(local_path)
+            self._upload_log(
+                "info",
+                "upload digests computed",
+                target_name=target_name,
+                file_size=file_size,
+                sha256=digests.get("sha256", ""),
+                sha1=digests.get("sha1", ""),
+                md5=digests.get("md5", ""),
+            )
         if self.mode == "personal" and provider == "yun139":
             task = self._create_upload_task(
                 target_name,
@@ -709,6 +877,7 @@ class CloudDriveMiniApi:
             task_detail = task.get("detail", {}) if isinstance(task.get("detail"), dict) else {}
             task_result = task.get("result", {}) if isinstance(task.get("result"), dict) else {}
             status = str(task.get("status") or "").strip().lower()
+            self._upload_log("info", "yun139 probe result", target_name=target_name, status=status, task=self._summarize_upload_result(task))
             if status == "success" or not bool(task_result.get("requires_upload", True)):
                 progress_callback(100)
                 actual_target_path = str(
@@ -716,6 +885,7 @@ class CloudDriveMiniApi:
                     or task_detail.get("target_path")
                     or f"{remote_dir_path.rstrip('/')}/{task_detail.get('target_name') or target_name}"
                 ).strip()
+                self._upload_log("info", "yun139 probe completed without direct upload", target_name=target_name, actual_target_path=actual_target_path)
                 return self.get_item(Path(self._visible_path(actual_target_path)))
         elif self.mode == "personal" and provider == "clouddrive2":
             task = self._create_upload_task(
@@ -731,6 +901,7 @@ class CloudDriveMiniApi:
             task_detail = task.get("detail", {}) if isinstance(task.get("detail"), dict) else {}
             task_result = task.get("result", {}) if isinstance(task.get("result"), dict) else {}
             status = str(task.get("status") or "").strip().lower()
+            self._upload_log("info", "clouddrive2 probe result", target_name=target_name, status=status, task=self._summarize_upload_result(task))
             if status == "success" or not bool(task_result.get("requires_upload", True)):
                 progress_callback(100)
                 actual_target_path = str(
@@ -738,10 +909,12 @@ class CloudDriveMiniApi:
                     or task_detail.get("target_path")
                     or f"{remote_dir_path.rstrip('/')}/{task_detail.get('target_name') or target_name}"
                 ).strip()
+                self._upload_log("info", "clouddrive2 probe completed without direct upload", target_name=target_name, actual_target_path=actual_target_path)
                 return self.get_item(Path(self._visible_path(actual_target_path)))
             if bool(task_detail.get("requires_block_hashes")):
                 md5_block_size = int(task_result.get("md5_block_size", 0) or task_detail.get("md5_block_size", 0) or 0)
                 if md5_block_size > 0:
+                    self._upload_log("info", "clouddrive2 probe requests block hashes", target_name=target_name, md5_block_size=md5_block_size)
                     retry_task = self._create_upload_task(
                         target_name,
                         file_size,
@@ -757,6 +930,7 @@ class CloudDriveMiniApi:
                     retry_detail = retry_task.get("detail", {}) if isinstance(retry_task.get("detail"), dict) else {}
                     retry_result = retry_task.get("result", {}) if isinstance(retry_task.get("result"), dict) else {}
                     retry_status = str(retry_task.get("status") or "").strip().lower()
+                    self._upload_log("info", "clouddrive2 block-hash probe result", target_name=target_name, status=retry_status, task=self._summarize_upload_result(retry_task))
                     if retry_status == "success" or not bool(retry_result.get("requires_upload", True)):
                         progress_callback(100)
                         actual_target_path = str(
@@ -764,6 +938,7 @@ class CloudDriveMiniApi:
                             or retry_detail.get("target_path")
                             or f"{remote_dir_path.rstrip('/')}/{retry_detail.get('target_name') or target_name}"
                         ).strip()
+                        self._upload_log("info", "clouddrive2 block-hash probe completed without direct upload", target_name=target_name, actual_target_path=actual_target_path)
                         return self.get_item(Path(self._visible_path(actual_target_path)))
         elif self.mode == "personal" and provider == "115":
             task = self._create_upload_task(
@@ -779,6 +954,7 @@ class CloudDriveMiniApi:
             task_detail = task.get("detail", {}) if isinstance(task.get("detail"), dict) else {}
             task_result = task.get("result", {}) if isinstance(task.get("result"), dict) else {}
             status = str(task.get("status") or "").strip().lower()
+            self._upload_log("info", "115 probe result", target_name=target_name, status=status, task=self._summarize_upload_result(task))
             if status == "success" or not bool(task_result.get("requires_upload", True)):
                 progress_callback(100)
                 actual_target_path = str(
@@ -786,9 +962,12 @@ class CloudDriveMiniApi:
                     or task_detail.get("target_path")
                     or f"{remote_dir_path.rstrip('/')}/{task_detail.get('target_name') or target_name}"
                 ).strip()
+                self._upload_log("info", "115 probe completed without direct upload", target_name=target_name, actual_target_path=actual_target_path)
                 return self.get_item(Path(self._visible_path(actual_target_path)))
         if global_vars.is_transfer_stopped(target_marker):
+            self._upload_log("warning", "upload aborted before direct upload", target_name=target_name, target_marker=target_marker)
             return None
+        self._upload_log("info", "fall back to direct upload", target_name=target_name, provider=provider, mode=self.mode)
         upload_result = self._upload_file_direct(local_path, target_name, remote_dir_path, progress_callback, digests=digests)
         result = upload_result if isinstance(upload_result, dict) else {}
         detail = {}
@@ -797,6 +976,7 @@ class CloudDriveMiniApi:
             or detail.get("target_path")
             or f"{remote_dir_path.rstrip('/')}/{detail.get('target_name') or target_name}"
         ).strip()
+        self._upload_log("info", "upload finished", target_name=target_name, actual_target_path=actual_target_path, result=self._summarize_upload_result(result))
         return self.get_item(Path(self._visible_path(actual_target_path)))
 
     def snapshot_storage(
