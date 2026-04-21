@@ -1,14 +1,14 @@
 {
-  "CloudDriveMiniDisk": {
-    "name": "CloudDrive Mini Storage",
-    "description": "Use the clouddrive-mini HTTP API as a custom MoviePilot storage backend.",
-    "labels": "storage",
-    "version": "0.1.0",
-    "icon": "Cloudrive_A.png",
-    "author": "zztt",
-    "level": 1,
-    "history": {
-      "v0.1.0": "Initial version with browse, detail, mkdir, delete, rename, download and chunked upload support."
+     "CloudDriveMiniDisk": {"CloudDriveMiniDisk"   "CloudDriveMiniDisk"   "CloudDriveMiniDisk": {
+    "name"   "name": "CloudDrive Mini Storage"云驱动器迷你存储,"name"   "name": "CloudDrive Mini Storage"云驱动器迷你存储,
+    使用clouddrive-mini HTTP API作为自定义的MoviePilot存储后端。"description"   "description": "Use the clouddrive-mini HTTP API as a custom MoviePilot storage backend."使用clouddrive-mini HTTP API作为自定义的MoviePilot存储后端。,
+       "labels": "storage"   "storage","labels"   "labels"   "labels": "storage"   "storage",
+       “version":“0.1.0"   "version""version": "0.1.0"   “0.1.0",
+    "icon"   "icon": "Cloudrive_A.png"   "Cloudrive_A.png","icon"   "icon": "Cloudrive_A.png"   "Cloudrive_A.png",
+       "author": "yyllaa"   "zztt","author"   "author"   "author": "zztt"   "zztt",
+       "level": 1,"level"   "level"   "level": 1,
+       "history": {"history"   "history"   "history": {
+      v0.1   "v0.1.0"   "v0.1.0".0": "；初始版本，支持浏览，详细信息，mkdir，删除，重命名，下载和分块上传。"；"v0.1.0": "Initial version with browse, detail, mkdir, delete, rename, download and chunked upload support."
     }
   }
 }
