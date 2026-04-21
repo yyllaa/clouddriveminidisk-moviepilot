@@ -20,7 +20,7 @@ class CloudDriveMiniDisk(_PluginBase):
     plugin_icon = "Cloudrive_A.png"
     plugin_version = VERSION
     plugin_author = "zztt"
-    author_url = ""
+    author_url = "https://github.com/yyllaa"
     plugin_config_prefix = "clouddriveminidisk_"
     plugin_order = 99
     auth_level = 1
