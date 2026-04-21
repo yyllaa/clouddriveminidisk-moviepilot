@@ -1,67 +1,97 @@
 # CloudDrive Mini Disk
 
-`CloudDriveMiniDisk` is a MoviePilot V2 storage plugin that uses the
-`clouddrive-mini` project's HTTP API as a custom storage backend.
+`CloudDriveMiniDisk` 是一个 MoviePilot V2 存储插件，用于将
+`clouddrive-mini` 项目的 HTTP API 接入为自定义存储后端。
 
-## Status
+## 当前能力
 
-This plugin directory is now beyond the skeleton stage. The current code
-already includes:
+当前代码已经实现：
 
-- custom storage registration
-- storage selection hook
-- directory browsing
-- file detail lookup
-- folder creation
-- delete
-- rename
-- download
-- upload through the `clouddrive-mini` chunk upload task API
-- copy
-- move
-- storage usage query through account overview
-- a simple plugin detail page for diagnostics
+- 自定义存储注册
+- 存储选择钩子
+- 目录浏览
+- 文件详情查询
+- 新建文件夹
+- 删除
+- 重命名
+- 下载
+- 通过 `clouddrive-mini` 上传接口上传文件
+- 复制
+- 移动
+- 通过账号概览查询存储容量
+- 一个用于诊断的简易插件详情页
+- 在插件配置页自动侦测并选择 `account_id`
 
-## Directory Files
+## 目录文件
 
 - `__init__.py`
-  Plugin entry, form definition, module hook registration.
+  插件入口、表单定义、模块钩子注册。
 - `clouddrive_mini_api.py`
-  Storage API adapter that talks to `clouddrive-mini`.
+  与 `clouddrive-mini` 通信的存储 API 适配层。
 - `version.py`
-  Plugin version.
+  插件版本号。
 - `requirements.txt`
-  Python runtime dependency.
-- `package.v2.snippet.json`
-  Metadata snippet for a MoviePilot plugin repository.
+  Python 运行时依赖。
 
-## Runtime Dependency
+## 运行依赖
 
-The plugin requires a running `clouddrive-mini` HTTP service.
+插件依赖一个已运行的 `clouddrive-mini` HTTP 服务。
 
-Default values:
+默认值：
 
-- host: `127.0.0.1`
-- port: `8765`
-- scheme: `http`
+- 主机：`127.0.0.1`
+- 端口：`8765`
+- 协议：`http`
 
-If project authentication is enabled in `clouddrive-mini`, configure:
+如果 `clouddrive-mini` 开启了项目认证，还需要配置：
 
 - `username`
 - `password`
 
-## Install
+## 配置项说明
 
-Copy this directory into a MoviePilot plugin repository as:
+- `enabled`
+  是否启用插件。
+- `https`
+  是否使用 HTTPS 代替 HTTP。
+- `host`
+  `clouddrive-mini` 服务地址。
+- `port`
+  `clouddrive-mini` 服务端口。
+- `account_id`
+  目标账号 ID。留空时可在配置页自动侦测并选择。
+- `mode`
+  运行模式，可选 `personal` 或 `family`。
+- `root_path`
+  插件可见的 `/` 会映射到这个远端路径。
+- `username`
+  当项目启用认证时使用的用户名。
+- `password`
+  当项目启用认证时使用的密码。
+- `timeout`
+  HTTP 请求超时时间，单位为秒。
+- `upload_chunk_size_mb`
+  上传分片大小，单位为 MB。
 
-```text
-plugins.v2/clouddriveminidisk
-```
+## API 对应关系
 
-Then merge the content of `package.v2.snippet.json` into that repository's
-`package.v2.json`.
+插件当前映射到以下 `clouddrive-mini` 接口：
 
-## package.v2 Metadata
+- 浏览目录：`GET /api/files` 或 `GET /api/family/files`
+- 查询详情：`GET /api/files/detail` 或 `GET /api/family/detail`
+- 新建目录：`POST /api/files/mkdir` 或 `POST /api/family/mkdir`
+- 重命名：`POST /api/files/rename` 或 `POST /api/family/rename`
+- 删除：`POST /api/files/delete` 或 `POST /api/family/delete`
+- 下载：`GET /api/files/download` 或 `GET /api/family/download`
+- 直接上传：`POST /api/files/upload` 或 `POST /api/family/upload`
+- 创建上传任务：`POST /api/tasks/upload/create`
+- 上传分片：`POST /api/tasks/upload/chunk`
+- 查询上传任务状态：`GET /api/tasks/detail`
+- 查询容量：`GET /api/accounts/overview`
+
+## 版本信息
+
+当前仓库元数据版本为 `v0.1.2`：
 
 ```json
 {
@@ -69,81 +99,35 @@ Then merge the content of `package.v2.snippet.json` into that repository's
     "name": "CloudDrive Mini存储",
     "description": "使用 clouddrive-mini 项目 HTTP API 作为 MoviePilot 自定义存储。",
     "labels": "存储",
-    "version": "0.1.1",
+    "version": "0.1.2",
     "icon": "Cloudrive_A.png",
     "author": "yyllaa",
     "level": 1,
     "history": {
+      "v0.1.2": "插件上传优先走项目直传接口并附带摘要头，减少中转缓存依赖；同步中文文档和作者主页。",
       "v0.1.1": "支持在插件配置页自动侦测并选择 account_id，保留原有配置可直接升级。",
-      "v0.1.0": "初始版本：接入 clouddrive-mini 作为自定义存储，支持浏览、详情、建目录、删除、重命名、下载、分片上传。"
+      "v0.1.0": "初始版本：接入 clouddrive-mini 作为 MoviePilot 自定义存储，支持浏览、详情、建目录、删除、重命名、下载和分片上传。"
     }
   }
 }
 ```
 
-## Config Fields
+## 当前不足
 
-- `enabled`
-  Enable the plugin.
-- `https`
-  Use HTTPS instead of HTTP.
-- `host`
-  `clouddrive-mini` host.
-- `port`
-  `clouddrive-mini` port.
-- `account_id`
-  Target account ID. If empty, use the active account.
-- `mode`
-  `personal` or `family`.
-- `root_path`
-  The plugin-visible `/` maps to this remote path.
-- `username`
-  Project auth username when project auth is enabled.
-- `password`
-  Project auth password when project auth is enabled.
-- `timeout`
-  HTTP timeout in seconds.
-- `upload_chunk_size_mb`
-  Upload chunk size in MB.
+- 还没有独立的自动化测试用例
+- `get_page()` 目前主要用于诊断，不是正式操作界面
+- 与真实 MoviePilot 运行环境的集成还需要在线验证
 
-## API Mapping
+## 建议验证步骤
 
-The plugin currently maps to these `clouddrive-mini` APIs:
-
-- browse: `GET /api/files` or `GET /api/family/files`
-- detail: `GET /api/files/detail` or `GET /api/family/detail`
-- mkdir: `POST /api/files/mkdir` or `POST /api/family/mkdir`
-- rename: `POST /api/files/rename` or `POST /api/family/rename`
-- delete: `POST /api/files/delete` or `POST /api/family/delete`
-- download: `GET /api/files/download` or `GET /api/family/download`
-- upload session: `POST /api/tasks/upload/create`
-- upload chunk: `POST /api/tasks/upload/chunk`
-- upload task state: `GET /api/tasks/detail`
-- storage usage: `GET /api/accounts/overview`
-
-## Current Gaps
-
-- no dedicated test suite for this standalone plugin directory
-- `get_page()` is diagnostic only, not an operational UI
-- real MoviePilot runtime integration still needs live verification
-
-## Suggested Live Verification
-
-1. Enable the plugin.
-2. Set `host`, `port`, `account_id`, `mode`, and `root_path`.
-3. Save config and confirm the storage appears.
-4. Browse a directory.
-5. Create a folder.
-6. Upload a small file.
-7. Download it back.
-8. Rename it.
-9. Copy it.
-10. Move it.
-11. Check storage usage.
-
-## Next Useful Work
-
-- add a dedicated local test file for this plugin
-- verify `family` mode against a real account
-- improve error normalization for user-facing messages
-- decide whether `copy/move` should expose more detailed success feedback
+1. 启用插件。
+2. 配置 `host`、`port`、`account_id`、`mode` 和 `root_path`。
+3. 保存配置并确认存储已经出现在系统中。
+4. 浏览一个目录。
+5. 新建一个文件夹。
+6. 上传一个小文件。
+7. 再把它下载回来。
+8. 执行重命名。
+9. 执行复制。
+10. 执行移动。
+11. 检查容量信息是否正常。

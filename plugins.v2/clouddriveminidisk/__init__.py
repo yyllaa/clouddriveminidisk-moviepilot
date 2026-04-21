@@ -19,8 +19,8 @@ class CloudDriveMiniDisk(_PluginBase):
     plugin_desc = "使用 clouddrive-mini 项目 HTTP API 作为 MoviePilot 自定义存储。"
     plugin_icon = "Cloudrive_A.png"
     plugin_version = VERSION
-    plugin_author = "zztt"
-    author_url = "https://github.com/yyllaa"
+    plugin_author = "yyllaa"
+    author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddriveminidisk_"
     plugin_order = 99
     auth_level = 1

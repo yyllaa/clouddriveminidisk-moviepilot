@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import hashlib
 from pathlib import Path, PurePosixPath
 from time import sleep, time
 from typing import Any, Dict, List, Optional
@@ -9,12 +10,43 @@ import requests
 
 from app.core.config import global_vars, settings
 from app.log import logger
-from app.modules.filemanager.storages import transfer_process
 from app.schemas import FileItem, StorageUsage
 
 
 class CloudDriveMiniError(RuntimeError):
     pass
+
+
+class _ProgressFileReader:
+    def __init__(self, file_obj: Any, total_bytes: int, progress_callback: Any) -> None:
+        self._file_obj = file_obj
+        self._total_bytes = max(0, int(total_bytes or 0))
+        self._progress_callback = progress_callback
+        self._uploaded_bytes = 0
+
+    def __len__(self) -> int:
+        return self._total_bytes
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._file_obj.read(size)
+        if chunk:
+            self._uploaded_bytes += len(chunk)
+            if self._total_bytes > 0 and self._progress_callback is not None:
+                self._progress_callback(min((self._uploaded_bytes * 100) / self._total_bytes, 100))
+        return chunk
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return self._file_obj.seek(offset, whence)
+
+    def tell(self) -> int:
+        return self._file_obj.tell()
+
+    def __getattr__(self, item: str) -> Any:
+        return getattr(self._file_obj, item)
+
+
+def _noop_progress_callback(_progress: float) -> None:
+    return None
 
 
 def _normalize_posix_path(path_text: str | Path | None) -> str:
@@ -458,7 +490,7 @@ class CloudDriveMiniApi:
         target_dir.mkdir(parents=True, exist_ok=True)
         local_path = target_dir / fileitem.name
         response = self._request_stream(self._endpoint("download"), params={"path": self._remote_path(fileitem.path)})
-        progress_callback = transfer_process(Path(fileitem.path).as_posix())
+        progress_callback = _noop_progress_callback
         total_bytes = int(response.headers.get("Content-Length") or 0)
         downloaded = 0
         try:
@@ -483,7 +515,61 @@ class CloudDriveMiniApi:
         finally:
             response.close()
 
-    def _create_upload_task(self, filename: str, file_size: int, remote_dir_path: str) -> dict[str, Any]:
+    def _file_digests(self, path: Path) -> dict[str, str]:
+        md5_digest = hashlib.md5()
+        sha1_digest = hashlib.sha1()
+        sha256_digest = hashlib.sha256()
+        with path.open("rb") as file_obj:
+            for chunk in iter(lambda: file_obj.read(1024 * 1024), b""):
+                if not chunk:
+                    break
+                md5_digest.update(chunk)
+                sha1_digest.update(chunk)
+                sha256_digest.update(chunk)
+        return {
+            "md5": md5_digest.hexdigest(),
+            "sha1": sha1_digest.hexdigest().upper(),
+            "sha256": sha256_digest.hexdigest(),
+        }
+
+    def _md5_block_hashes(self, path: Path, block_size: int) -> list[str]:
+        normalized_block_size = max(1, int(block_size or 0))
+        blocks: list[str] = []
+        with path.open("rb") as file_obj:
+            while True:
+                chunk = file_obj.read(normalized_block_size)
+                if not chunk:
+                    break
+                block_md5 = hashlib.md5()
+                block_md5.update(chunk)
+                blocks.append(block_md5.hexdigest())
+        return blocks
+
+    def _current_provider(self) -> str:
+        accounts_data = self.list_accounts()
+        target_account_id = self.account_id or str(accounts_data.get("active_account_id") or "").strip()
+        for account in accounts_data.get("accounts", []):
+            if not isinstance(account, dict):
+                continue
+            if str(account.get("account_id") or "").strip() != target_account_id:
+                continue
+            return str(account.get("provider") or "").strip()
+        return ""
+
+    def _create_upload_task(
+        self,
+        filename: str,
+        file_size: int,
+        remote_dir_path: str,
+        *,
+        content_hash: str = "",
+        content_hash_algorithm: str = "",
+        sha1: str = "",
+        md5: str = "",
+        md5_block_size: int = 0,
+        md5_block_hashes: Optional[List[str]] = None,
+        probe_only: bool = False,
+    ) -> dict[str, Any]:
         return self._request_json(
             "POST",
             "/api/tasks/upload/create",
@@ -493,8 +579,76 @@ class CloudDriveMiniApi:
                 "remote_dir_path": remote_dir_path,
                 "mode": self.mode,
                 "chunk_size": self.upload_chunk_size,
+                "content_hash": content_hash,
+                "content_hash_algorithm": content_hash_algorithm,
+                "sha1": sha1,
+                "md5": md5,
+                "md5_block_size": md5_block_size,
+                "md5_block_hashes": list(md5_block_hashes or []),
+                "probe_only": probe_only,
             },
         )
+
+    def _upload_file_direct(
+        self,
+        local_path: Path,
+        filename: str,
+        remote_dir_path: str,
+        progress_callback: Any,
+        *,
+        digests: Optional[Dict[str, str]] = None,
+    ) -> dict[str, Any]:
+        endpoint = "/api/family/upload" if self.mode == "family" else "/api/files/upload"
+        self._ensure_auth()
+        request_params: Dict[str, Any] = {}
+        if self.account_id:
+            request_params["account_id"] = self.account_id
+        file_size = int(local_path.stat().st_size or 0)
+        if file_size <= 0:
+            raise CloudDriveMiniError("upload body is empty")
+        headers = {
+            "Content-Type": "application/octet-stream",
+            "Content-Length": str(file_size),
+            "X-Filename": filename,
+            "X-Remote-Dir": remote_dir_path,
+            "X-Upload-Origin": "plugin",
+        }
+        normalized_digests = dict(digests or {})
+        if str(normalized_digests.get("sha256") or "").strip():
+            headers["X-Content-Hash"] = str(normalized_digests.get("sha256") or "").strip()
+            headers["X-Content-Hash-Algorithm"] = "SHA256"
+        if str(normalized_digests.get("sha1") or "").strip():
+            headers["X-Content-Sha1"] = str(normalized_digests.get("sha1") or "").strip()
+        if str(normalized_digests.get("md5") or "").strip():
+            headers["X-Content-Md5"] = str(normalized_digests.get("md5") or "").strip()
+        if progress_callback is not None:
+            progress_callback(0)
+        for attempt in range(2):
+            with local_path.open("rb") as file_obj:
+                upload_stream = _ProgressFileReader(file_obj, file_size, progress_callback)
+                response = self.session.request(
+                    "POST",
+                    f"{self.base_url}{endpoint}",
+                    params=request_params,
+                    headers=headers,
+                    data=upload_stream,
+                    timeout=max(self.timeout, 3600),
+                )
+            if response.status_code == 401 and attempt == 0:
+                response.close()
+                self._ensure_auth(force=True)
+                if progress_callback is not None:
+                    progress_callback(0)
+                continue
+            response.raise_for_status()
+            result = response.json()
+            response.close()
+            if str(result.get("status", "") or "").strip().lower() == "error":
+                raise CloudDriveMiniError(str(result.get("message") or f"{endpoint} failed"))
+            if progress_callback is not None:
+                progress_callback(100)
+            return result
+        raise CloudDriveMiniError(f"{endpoint} failed")
 
     def _upload_task_detail(self, task_id: str) -> dict[str, Any]:
         return self._request_json("GET", "/api/tasks/detail", params={"task_id": task_id})
@@ -534,40 +688,110 @@ class CloudDriveMiniApi:
         if not local_path.exists() or not local_path.is_file():
             raise CloudDriveMiniError(f"local file not found: {local_path}")
         target_name = str(new_name or local_path.name).strip() or local_path.name
-        task = self._create_upload_task(target_name, int(local_path.stat().st_size or 0), remote_dir_path)
-        task_id = str(task.get("task_id") or "").strip()
-        if not task_id:
-            raise CloudDriveMiniError("upload task_id is empty")
-        detail = task.get("detail", {}) if isinstance(task.get("detail"), dict) else {}
-        chunk_size = max(256 * 1024, int(detail.get("chunk_size") or self.upload_chunk_size))
-        total_chunks = max(1, int(detail.get("total_chunks") or ((local_path.stat().st_size + chunk_size - 1) // chunk_size)))
-        uploaded_chunks = {
-            int(value)
-            for value in (task.get("uploaded_chunks") or [])
-            if str(value).isdigit()
-        }
+        file_size = int(local_path.stat().st_size or 0)
         target_marker = PurePosixPath(target_dir.path).joinpath(target_name).as_posix()
-        progress_callback = transfer_process(target_marker)
-        uploaded_bytes = sum(min(chunk_size, max(0, int(local_path.stat().st_size) - index * chunk_size)) for index in uploaded_chunks)
-        if local_path.stat().st_size > 0:
-            progress_callback((uploaded_bytes * 100) / int(local_path.stat().st_size))
-        with local_path.open("rb") as file_obj:
-            for chunk_index in range(total_chunks):
-                if chunk_index in uploaded_chunks:
-                    continue
-                if global_vars.is_transfer_stopped(target_marker):
-                    return None
-                chunk = file_obj.read(chunk_size)
-                if not chunk:
-                    break
-                self._upload_chunk(task_id, chunk_index, total_chunks, chunk_size, chunk)
-                uploaded_bytes += len(chunk)
-                if local_path.stat().st_size > 0:
-                    progress_callback((uploaded_bytes * 100) / int(local_path.stat().st_size))
-        task_state = self._wait_upload_complete(task_id)
-        progress_callback(100)
-        result = task_state.get("result", {}) if isinstance(task_state.get("result"), dict) else {}
-        detail = task_state.get("detail", {}) if isinstance(task_state.get("detail"), dict) else {}
+        progress_callback = _noop_progress_callback
+        provider = self._current_provider()
+        digests: dict[str, str] = {}
+        if self.mode == "personal" and provider in {"yun139", "unicom", "115", "clouddrive2"}:
+            digests = self._file_digests(local_path)
+        if self.mode == "personal" and provider == "yun139":
+            task = self._create_upload_task(
+                target_name,
+                file_size,
+                remote_dir_path,
+                content_hash=str(digests.get("sha256") or ""),
+                content_hash_algorithm="SHA256",
+                sha1=str(digests.get("sha1") or ""),
+                md5=str(digests.get("md5") or ""),
+                probe_only=True,
+            )
+            task_detail = task.get("detail", {}) if isinstance(task.get("detail"), dict) else {}
+            task_result = task.get("result", {}) if isinstance(task.get("result"), dict) else {}
+            status = str(task.get("status") or "").strip().lower()
+            if status == "success" or not bool(task_result.get("requires_upload", True)):
+                progress_callback(100)
+                actual_target_path = str(
+                    task_result.get("path")
+                    or task_detail.get("target_path")
+                    or f"{remote_dir_path.rstrip('/')}/{task_detail.get('target_name') or target_name}"
+                ).strip()
+                return self.get_item(Path(self._visible_path(actual_target_path)))
+        elif self.mode == "personal" and provider == "clouddrive2":
+            task = self._create_upload_task(
+                target_name,
+                file_size,
+                remote_dir_path,
+                content_hash=str(digests.get("sha256") or ""),
+                content_hash_algorithm="SHA256",
+                sha1=str(digests.get("sha1") or ""),
+                md5=str(digests.get("md5") or ""),
+                probe_only=True,
+            )
+            task_detail = task.get("detail", {}) if isinstance(task.get("detail"), dict) else {}
+            task_result = task.get("result", {}) if isinstance(task.get("result"), dict) else {}
+            status = str(task.get("status") or "").strip().lower()
+            if status == "success" or not bool(task_result.get("requires_upload", True)):
+                progress_callback(100)
+                actual_target_path = str(
+                    task_result.get("path")
+                    or task_detail.get("target_path")
+                    or f"{remote_dir_path.rstrip('/')}/{task_detail.get('target_name') or target_name}"
+                ).strip()
+                return self.get_item(Path(self._visible_path(actual_target_path)))
+            if bool(task_detail.get("requires_block_hashes")):
+                md5_block_size = int(task_result.get("md5_block_size", 0) or task_detail.get("md5_block_size", 0) or 0)
+                if md5_block_size > 0:
+                    retry_task = self._create_upload_task(
+                        target_name,
+                        file_size,
+                        remote_dir_path,
+                        content_hash=str(digests.get("sha256") or ""),
+                        content_hash_algorithm="SHA256",
+                        sha1=str(digests.get("sha1") or ""),
+                        md5=str(digests.get("md5") or ""),
+                        md5_block_size=md5_block_size,
+                        md5_block_hashes=self._md5_block_hashes(local_path, md5_block_size),
+                        probe_only=True,
+                    )
+                    retry_detail = retry_task.get("detail", {}) if isinstance(retry_task.get("detail"), dict) else {}
+                    retry_result = retry_task.get("result", {}) if isinstance(retry_task.get("result"), dict) else {}
+                    retry_status = str(retry_task.get("status") or "").strip().lower()
+                    if retry_status == "success" or not bool(retry_result.get("requires_upload", True)):
+                        progress_callback(100)
+                        actual_target_path = str(
+                            retry_result.get("path")
+                            or retry_detail.get("target_path")
+                            or f"{remote_dir_path.rstrip('/')}/{retry_detail.get('target_name') or target_name}"
+                        ).strip()
+                        return self.get_item(Path(self._visible_path(actual_target_path)))
+        elif self.mode == "personal" and provider == "115":
+            task = self._create_upload_task(
+                target_name,
+                file_size,
+                remote_dir_path,
+                content_hash=str(digests.get("sha256") or ""),
+                content_hash_algorithm="SHA256",
+                sha1=str(digests.get("sha1") or ""),
+                md5=str(digests.get("md5") or ""),
+                probe_only=True,
+            )
+            task_detail = task.get("detail", {}) if isinstance(task.get("detail"), dict) else {}
+            task_result = task.get("result", {}) if isinstance(task.get("result"), dict) else {}
+            status = str(task.get("status") or "").strip().lower()
+            if status == "success" or not bool(task_result.get("requires_upload", True)):
+                progress_callback(100)
+                actual_target_path = str(
+                    task_result.get("path")
+                    or task_detail.get("target_path")
+                    or f"{remote_dir_path.rstrip('/')}/{task_detail.get('target_name') or target_name}"
+                ).strip()
+                return self.get_item(Path(self._visible_path(actual_target_path)))
+        if global_vars.is_transfer_stopped(target_marker):
+            return None
+        upload_result = self._upload_file_direct(local_path, target_name, remote_dir_path, progress_callback, digests=digests)
+        result = upload_result if isinstance(upload_result, dict) else {}
+        detail = {}
         actual_target_path = str(
             result.get("path")
             or detail.get("target_path")
