@@ -58,7 +58,8 @@ class CloudDriveStorageBridge(_PluginBase):
 
     _enabled = False
     _server_url = ""
-    _token = ""
+    _username = ""
+    _password = ""
     _root_key = ""
     _last_error = ""
     _last_roots: List[Dict[str, Any]] = []
@@ -75,7 +76,8 @@ class CloudDriveStorageBridge(_PluginBase):
                 pass
         self._enabled = bool(config.get("enabled"))
         self._server_url = str(config.get("server_url", "") or "").strip()
-        self._token = str(config.get("token", "") or "").strip()
+        self._username = str(config.get("username", "") or "").strip()
+        self._password = str(config.get("password", "") or "").strip()
         self._root_key = str(config.get("root_key", "") or "").strip()
         self._last_error = ""
         self._last_roots = []
@@ -96,7 +98,7 @@ class CloudDriveStorageBridge(_PluginBase):
                 "methods": ["GET"],
                 "auth": "bear",
                 "summary": "读取 CloudDrive 挂载根目录",
-                "description": "从 clouddrive-mini 的桥接接口读取可用挂载根目录。",
+                "description": "从 clouddrive-mini 的内置存储接口读取可用挂载根目录。",
             },
             {
                 "path": "/resolve",
@@ -182,8 +184,21 @@ class CloudDriveStorageBridge(_PluginBase):
                                     {
                                         "component": "VTextField",
                                         "props": {
-                                            "model": "token",
-                                            "label": "桥接 Token",
+                                            "model": "username",
+                                            "label": "登录账号",
+                                        },
+                                    }
+                                ],
+                            },
+                            {
+                                "component": "VCol",
+                                "props": {"cols": 12, "md": 6},
+                                "content": [
+                                    {
+                                        "component": "VTextField",
+                                        "props": {
+                                            "model": "password",
+                                            "label": "登录密码",
                                             "type": "password",
                                         },
                                     }
@@ -210,7 +225,8 @@ class CloudDriveStorageBridge(_PluginBase):
         ], {
             "enabled": False,
             "server_url": "",
-            "token": "",
+            "username": "",
+            "password": "",
             "root_key": "",
         }
 
@@ -303,7 +319,8 @@ class CloudDriveStorageBridge(_PluginBase):
     def _client(self) -> CloudDriveStorageBridgeClient:
         return CloudDriveStorageBridgeClient(
             server_url=self._server_url,
-            token=self._token,
+            username=self._username,
+            password=self._password,
             root_key=self._root_key,
         )
 
