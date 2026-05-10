@@ -48,7 +48,7 @@ class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
     plugin_desc = "连接 clouddrive-mini 的挂载目录，为 MoviePilot 提供可选存储路径和直传能力。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "0.4.0"
+    plugin_version = "0.5.0"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
@@ -92,9 +92,10 @@ class CloudDriveStorageBridge(_PluginBase):
         return []
 
     def get_api(self) -> List[Dict[str, Any]]:
+        api_prefix = f"/{self.__class__.__name__}"
         return [
             {
-                "path": "/roots",
+                "path": f"{api_prefix}/roots",
                 "endpoint": self.api_roots,
                 "methods": ["GET", "POST"],
                 "auth": "bear",
@@ -102,7 +103,7 @@ class CloudDriveStorageBridge(_PluginBase):
                 "description": "从 clouddrive-mini 的内置存储接口读取可用挂载根目录。",
             },
             {
-                "path": "/resolve",
+                "path": f"{api_prefix}/resolve",
                 "endpoint": self.api_resolve,
                 "methods": ["POST"],
                 "auth": "bear",
@@ -110,7 +111,7 @@ class CloudDriveStorageBridge(_PluginBase):
                 "description": "根据媒体类型和标题生成最终保存路径。",
             },
             {
-                "path": "/probe",
+                "path": f"{api_prefix}/probe",
                 "endpoint": self.api_probe,
                 "methods": ["POST"],
                 "auth": "bear",
@@ -118,7 +119,7 @@ class CloudDriveStorageBridge(_PluginBase):
                 "description": "对目标目录执行一次可写性探测。",
             },
             {
-                "path": "/upload-probe",
+                "path": f"{api_prefix}/upload-probe",
                 "endpoint": self.api_upload_probe,
                 "methods": ["POST"],
                 "auth": "bear",
