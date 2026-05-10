@@ -11,14 +11,6 @@ from typing import Any
 INVALID_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 SPACE_RE = re.compile(r"\s+")
 SUPPORTED_MEDIA_TYPES = {"movie", "tv", "series", "anime", "generic", "download"}
-DEFAULT_MEDIA_DIRS = {
-    "movie": "Movies",
-    "tv": "TV Shows",
-    "series": "TV Shows",
-    "anime": "Anime",
-    "generic": "Library",
-    "download": "Downloads",
-}
 DEFAULT_UPLOAD_CHUNK_SIZE = 4 * 1024 * 1024
 STREAM_REQUEST_HEADER_MAP = {
     "filename": ("x-mp-filename", "x-filename"),
@@ -52,17 +44,6 @@ def _plugin_config(context: Any) -> dict[str, Any]:
 
 def _env_text(name: str) -> str:
     return str(os.environ.get(name, "") or "").strip()
-
-
-def _normalize_media_dirs(raw: Any) -> dict[str, str]:
-    media_dirs = dict(DEFAULT_MEDIA_DIRS)
-    if isinstance(raw, dict):
-        for key, value in raw.items():
-            normalized_key = str(key or "").strip().lower()
-            text = _sanitize_path_component(value)
-            if normalized_key in media_dirs and text:
-                media_dirs[normalized_key] = text
-    return media_dirs
 
 
 def _normalize_path_aliases(raw: Any) -> list[dict[str, str]]:
@@ -118,7 +99,6 @@ def _normalized_config(context: Any) -> dict[str, Any]:
         "preferred_root_keys": preferred_root_keys,
         "include_account_ids": include_account_ids,
         "include_modes": include_modes,
-        "media_dirs": _normalize_media_dirs(config.get("media_dirs", {})),
         "create_dirs_on_resolve": bool(config.get("create_dirs_on_resolve", True)),
         "allow_probe_write": bool(config.get("allow_probe_write", True)),
     }
@@ -384,6 +364,129 @@ def manifest_summary_payload(context: Any) -> dict[str, Any]:
     }
 
 
+def _resolve_target_path(context: Any, payload: dict[str, Any], *, create_dirs: bool = False) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    local_path_text = str(payload.get("local_path", "") or "").strip()
+    if local_path_text:
+        roots = _mounted_roots(context)
+        selected_root = _select_root(context, payload, roots)
+        local_path = Path(local_path_text).expanduser()
+        return local_path, selected_root, {
+            "status": "ok",
+            "selected_root": selected_root,
+            "relative_subpath": "",
+            "relative_to_root": "",
+            "local_path": str(local_path),
+            "exported_path": _apply_path_alias(local_path, _normalized_config(context)["path_aliases"]),
+            "created": False,
+        }
+    resolved_payload = resolve_storage_payload(
+        context,
+        {
+            **dict(payload or {}),
+            "create_dirs": bool(create_dirs),
+        },
+    )
+    return (
+        Path(str(resolved_payload["local_path"])),
+        dict(resolved_payload["selected_root"]),
+        resolved_payload,
+    )
+
+
+def _storage_path_for(root: dict[str, Any], local_path: Path) -> str:
+    root_dir = Path(str(root.get("mapping_dir", "") or "")).expanduser()
+    try:
+        relative = local_path.resolve().relative_to(root_dir.resolve())
+        relative_text = str(relative).replace("\\", "/").strip("/")
+    except Exception:
+        relative_text = local_path.name
+    if not relative_text:
+        return "/"
+    return f"/{relative_text}"
+
+
+def _item_payload_for_path(context: Any, root: dict[str, Any], local_path: Path) -> dict[str, Any]:
+    stat = local_path.stat()
+    is_dir = local_path.is_dir()
+    return {
+        "root_key": str(root.get("root_key", "") or "").strip(),
+        "account_id": str(root.get("account_id", "") or "").strip(),
+        "account_label": str(root.get("account_label", "") or "").strip(),
+        "provider": str(root.get("provider", "") or "").strip(),
+        "mode": str(root.get("mode", "") or "").strip(),
+        "name": local_path.name if local_path.name else "/",
+        "type": "dir" if is_dir else "file",
+        "size": 0 if is_dir else int(stat.st_size),
+        "modify_time": int(stat.st_mtime),
+        "local_path": str(local_path),
+        "exported_path": _apply_path_alias(local_path, _normalized_config(context)["path_aliases"]),
+        "storage_path": _storage_path_for(root, local_path),
+        "exists": True,
+        "is_dir": is_dir,
+    }
+
+
+def item_payload(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    local_path, root, resolved_payload = _resolve_target_path(context, payload, create_dirs=False)
+    if not local_path.exists():
+        return {
+            "status": "ok",
+            "item": None,
+            "selected_root": root,
+            "resolved_path": str(local_path),
+            "relative_subpath": str(resolved_payload.get("relative_subpath", "") or ""),
+        }
+    return {
+        "status": "ok",
+        "item": _item_payload_for_path(context, root, local_path),
+        "selected_root": root,
+        "resolved_path": str(local_path),
+        "relative_subpath": str(resolved_payload.get("relative_subpath", "") or ""),
+    }
+
+
+def list_payload(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    local_path, root, resolved_payload = _resolve_target_path(context, payload, create_dirs=False)
+    if not local_path.exists():
+        return {
+            "status": "ok",
+            "items": [],
+            "selected_root": root,
+            "resolved_path": str(local_path),
+            "relative_subpath": str(resolved_payload.get("relative_subpath", "") or ""),
+        }
+    if not local_path.is_dir():
+        items = [_item_payload_for_path(context, root, local_path)]
+    else:
+        items = [
+            _item_payload_for_path(context, root, child)
+            for child in sorted(
+                local_path.iterdir(),
+                key=lambda item: (not item.is_dir(), item.name.lower()),
+            )
+        ]
+    return {
+        "status": "ok",
+        "items": items,
+        "selected_root": root,
+        "resolved_path": str(local_path),
+        "relative_subpath": str(resolved_payload.get("relative_subpath", "") or ""),
+    }
+
+
+def mkdir_payload(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    local_path, root, resolved_payload = _resolve_target_path(context, payload, create_dirs=True)
+    local_path.mkdir(parents=True, exist_ok=True)
+    return {
+        "status": "ok",
+        "item": _item_payload_for_path(context, root, local_path),
+        "selected_root": root,
+        "resolved_path": str(local_path),
+        "relative_subpath": str(resolved_payload.get("relative_subpath", "") or ""),
+        "created": True,
+    }
+
+
 def _sanitize_path_component(value: Any) -> str:
     text = SPACE_RE.sub(" ", str(value or "").strip())
     if not text:
@@ -423,22 +526,19 @@ def _season_dir(value: Any) -> str:
     return f"Season {number}"
 
 
-def _build_relative_subpath(payload: dict[str, Any], media_dirs: dict[str, str]) -> str:
+def _build_relative_subpath(payload: dict[str, Any]) -> str:
     provided_sub_path = str(payload.get("sub_path", "") or "").strip().replace("\\", "/").strip("/")
     if provided_sub_path:
         parts = [_sanitize_path_component(part) for part in provided_sub_path.split("/") if _sanitize_path_component(part)]
         return "/".join(parts)
 
     media_type = _normalized_media_type(payload.get("media_type", "generic"))
-    base_dir = media_dirs.get(media_type, media_dirs["generic"])
     title_dir = _title_with_year(str(payload.get("title", "") or ""), payload.get("year"))
     category = _sanitize_path_component(payload.get("category", ""))
     season_dir = _season_dir(payload.get("season"))
 
     parts: list[str] = []
-    if base_dir:
-        parts.append(base_dir)
-    if media_type == "generic" and category:
+    if category:
         parts.append(category)
     if title_dir:
         parts.append(title_dir)
@@ -477,7 +577,7 @@ def resolve_storage_payload(context: Any, payload: dict[str, Any]) -> dict[str, 
     roots = _mounted_roots(context)
     config = _normalized_config(context)
     selected_root = _select_root(context, payload, roots)
-    relative_subpath = _build_relative_subpath(payload, config["media_dirs"])
+    relative_subpath = _build_relative_subpath(payload)
     local_dir = Path(selected_root["mapping_dir"])
     if relative_subpath:
         local_dir = local_dir / Path(relative_subpath.replace("/", os.sep))
