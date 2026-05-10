@@ -31,7 +31,7 @@ MoviePilot V2 插件骨架，用来对接 `clouddrive-mini` 里的 `moviepilot-s
     "name": "CloudDrive 存储桥接",
     "description": "连接 clouddrive-mini 挂载目录，为 MoviePilot 提供可选存储路径和直传能力。",
     "labels": "存储,云盘,桥接",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "icon": "Cloudrive_A.png",
     "author": "yyllaa",
     "level": 1
@@ -65,18 +65,24 @@ MoviePilot V2 插件骨架，用来对接 `clouddrive-mini` 里的 `moviepilot-s
 - `list_files`
 - `any_files`
 - `upload_file`
+- `delete_file`
+- `rename_file`
 - `create_folder`
 - `exists`
 - `get_item`
 - `get_file_item`
 - `get_parent_item`
 - `support_transtype`
+- `storage_usage`
 
 其中目录与文件元数据来自 `clouddrive-mini` 侧桥接接口新增的：
 
 - `item`
 - `list`
 - `mkdir`
+- `delete`
+- `rename`
+- `usage`
 
 ## 直传说明
 
