@@ -1,7 +1,7 @@
 {
   "id": "moviepilot-storage",
   "name": "MoviePilot Storage Bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Expose mounted cloud-drive roots as storage targets for MoviePilot.",
   "entry": "web/index.html",
   "enabled_by_default": false,
