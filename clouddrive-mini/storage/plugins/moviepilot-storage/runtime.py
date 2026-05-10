@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -336,7 +337,7 @@ def _apply_path_alias(path: Path, aliases: list[dict[str, str]]) -> str:
         if original_lower == source:
             return alias["to"]
         if original_lower.startswith(source.rstrip("/") + "/"):
-            suffix = original.replace("\\", "/")[len(alias["from"].replace("\\", "/")):].lstrip("/")
+            suffix = original.replace("\\", "/")[len(alias["from"].replace("\\", "/")) :].lstrip("/")
             return alias["to"].rstrip("/\\") + ("/" + suffix if suffix else "")
     return original
 
@@ -484,6 +485,65 @@ def mkdir_payload(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "resolved_path": str(local_path),
         "relative_subpath": str(resolved_payload.get("relative_subpath", "") or ""),
         "created": True,
+    }
+
+
+def delete_payload(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    local_path, root, resolved_payload = _resolve_target_path(context, payload, create_dirs=False)
+    if not local_path.exists():
+        return {
+            "status": "ok",
+            "deleted": False,
+            "selected_root": root,
+            "resolved_path": str(local_path),
+            "message": "path does not exist",
+        }
+    if local_path.is_dir():
+        shutil.rmtree(local_path)
+    else:
+        local_path.unlink()
+    return {
+        "status": "ok",
+        "deleted": True,
+        "selected_root": root,
+        "resolved_path": str(local_path),
+        "relative_subpath": str(resolved_payload.get("relative_subpath", "") or ""),
+    }
+
+
+def rename_payload(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    local_path, root, resolved_payload = _resolve_target_path(context, payload, create_dirs=False)
+    if not local_path.exists():
+        raise RuntimeError(f"path does not exist: {local_path}")
+    new_name = _sanitize_path_component(payload.get("new_name", ""))
+    if not new_name:
+        raise RuntimeError("new_name is required")
+    target_path = local_path.with_name(new_name)
+    local_path.rename(target_path)
+    return {
+        "status": "ok",
+        "renamed": True,
+        "item": _item_payload_for_path(context, root, target_path),
+        "selected_root": root,
+        "resolved_path": str(target_path),
+        "old_path": str(local_path),
+        "relative_subpath": str(resolved_payload.get("relative_subpath", "") or ""),
+    }
+
+
+def usage_payload(context: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    roots = _mounted_roots(context)
+    selected_root = _select_root(context, payload, roots)
+    mapping_dir = Path(str(selected_root.get("mapping_dir", "") or "")).expanduser()
+    total, used, free = shutil.disk_usage(mapping_dir)
+    return {
+        "status": "ok",
+        "selected_root": selected_root,
+        "usage": {
+            "total": int(total),
+            "used": int(used),
+            "available": int(free),
+        },
     }
 
 
