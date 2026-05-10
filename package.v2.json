@@ -9,7 +9,7 @@
     "level": 1,
     "v2": true,
     "history": {
-      "v0.5.0": "???? API ?????????? /api/v1/plugin/CloudDriveStorageBridge/*????????? Not Found?",
+      "v0.5.0": "修正插件 API 注册路径，显式挂载到 /api/v1/plugin/CloudDriveStorageBridge/*，解决插件调用返回 Not Found。",
       "v0.4.0": "抬高版本号以触发 MoviePilot 更新识别，包含 roots POST 兼容和配置保存后自动刷新根目录快照。",
       "v0.3.1": "兼容 MoviePilot 以 POST 调用 roots 接口，并在保存配置后自动刷新根目录快照。",
       "v0.3.0": "插件改为通过 clouddrive-mini 项目账号密码登录，脱离宿主机 moviepilot-storage token 依赖。",
