@@ -55,6 +55,15 @@ def handle_api(request: Any, context: Any) -> Any:
     if action == "mkdir" and method in {"GET", "POST"}:
         payload = runtime.request_payload(request)
         return runtime.mkdir_payload(context, payload)
+    if action == "delete" and method in {"GET", "POST"}:
+        payload = runtime.request_payload(request)
+        return runtime.delete_payload(context, payload)
+    if action == "rename" and method in {"GET", "POST"}:
+        payload = runtime.request_payload(request)
+        return runtime.rename_payload(context, payload)
+    if action == "usage" and method in {"GET", "POST"}:
+        payload = runtime.request_payload(request)
+        return runtime.usage_payload(context, payload)
     if action == "resolve" and method in {"GET", "POST"}:
         payload = runtime.request_payload(request)
         return runtime.resolve_storage_payload(context, payload)
