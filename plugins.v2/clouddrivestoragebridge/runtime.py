@@ -82,6 +82,18 @@ class CloudDriveStorageBridgeClient:
         merged = self._merge_defaults(payload)
         return self._request("POST", "mkdir", merged)
 
+    def delete_entry(self, payload: dict[str, Any]) -> dict[str, Any]:
+        merged = self._merge_defaults(payload)
+        return self._request("POST", "delete", merged)
+
+    def rename_entry(self, payload: dict[str, Any]) -> dict[str, Any]:
+        merged = self._merge_defaults(payload)
+        return self._request("POST", "rename", merged)
+
+    def usage(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        merged = self._merge_defaults(payload or {})
+        return self._request("POST", "usage", merged)
+
     def resolve_storage(self, payload: dict[str, Any]) -> dict[str, Any]:
         merged = self._merge_defaults(payload)
         return self._request("POST", "resolve", merged)
