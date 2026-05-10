@@ -46,6 +46,15 @@ def handle_api(request: Any, context: Any) -> Any:
         return runtime.list_roots_payload(context)
     if action == "manifest-summary" and method == "GET":
         return runtime.manifest_summary_payload(context)
+    if action == "item" and method in {"GET", "POST"}:
+        payload = runtime.request_payload(request)
+        return runtime.item_payload(context, payload)
+    if action == "list" and method in {"GET", "POST"}:
+        payload = runtime.request_payload(request)
+        return runtime.list_payload(context, payload)
+    if action == "mkdir" and method in {"GET", "POST"}:
+        payload = runtime.request_payload(request)
+        return runtime.mkdir_payload(context, payload)
     if action == "resolve" and method in {"GET", "POST"}:
         payload = runtime.request_payload(request)
         return runtime.resolve_storage_payload(context, payload)
