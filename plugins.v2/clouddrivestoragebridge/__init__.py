@@ -23,7 +23,6 @@ class CloudDriveStorageBridge(_PluginBase):
     _server_url = ""
     _token = ""
     _root_key = ""
-    _media_dirs: Dict[str, str] = {}
     _last_error = ""
     _last_roots: List[Dict[str, Any]] = []
     _last_transfer: Dict[str, Any] = {}
@@ -34,7 +33,6 @@ class CloudDriveStorageBridge(_PluginBase):
         self._server_url = str(config.get("server_url", "") or "").strip()
         self._token = str(config.get("token", "") or "").strip()
         self._root_key = str(config.get("root_key", "") or "").strip()
-        self._media_dirs = dict(config.get("media_dirs", {}) or {})
         self._last_error = ""
         self._last_roots = []
         self._last_transfer = {}
@@ -145,45 +143,6 @@ class CloudDriveStorageBridge(_PluginBase):
                                     }
                                 ],
                             },
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12, "md": 4},
-                                "content": [
-                                    {
-                                        "component": "VTextField",
-                                        "props": {
-                                            "model": "movie_dir",
-                                            "label": "电影目录",
-                                        },
-                                    }
-                                ],
-                            },
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12, "md": 4},
-                                "content": [
-                                    {
-                                        "component": "VTextField",
-                                        "props": {
-                                            "model": "tv_dir",
-                                            "label": "剧集目录",
-                                        },
-                                    }
-                                ],
-                            },
-                            {
-                                "component": "VCol",
-                                "props": {"cols": 12, "md": 4},
-                                "content": [
-                                    {
-                                        "component": "VTextField",
-                                        "props": {
-                                            "model": "anime_dir",
-                                            "label": "动漫目录",
-                                        },
-                                    }
-                                ],
-                            },
                         ],
                     }
                 ],
@@ -193,9 +152,6 @@ class CloudDriveStorageBridge(_PluginBase):
             "server_url": "",
             "token": "",
             "root_key": "",
-            "movie_dir": "Movies",
-            "tv_dir": "TV Shows",
-            "anime_dir": "Anime",
         }
 
     def get_page(self) -> List[dict]:
@@ -281,7 +237,6 @@ class CloudDriveStorageBridge(_PluginBase):
             server_url=self._server_url,
             token=self._token,
             root_key=self._root_key,
-            media_dirs=self._media_dirs,
         )
 
     def _remember_error(self, error: Exception) -> None:

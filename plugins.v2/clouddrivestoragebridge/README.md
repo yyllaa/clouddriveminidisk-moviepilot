@@ -5,7 +5,7 @@ MoviePilot V2 插件骨架，用来对接 `clouddrive-mini` 里的 `moviepilot-s
 ## 作用
 
 - 从 `clouddrive-mini` 读取已经挂载好的云盘根目录
-- 按电影 / 剧集 / 动漫类型解析目标保存路径
+- 按 MoviePilot 传入的子路径解析目标保存位置
 - 在 MoviePilot 侧发起目录可写性探测
 - 在真正上传前先做 `upload-probe`
 - 需要上传文件内容时，走 `clouddrive-mini` 的直传路由，不经过 MoviePilot 插件 HTTP 上传缓冲
@@ -43,9 +43,8 @@ MoviePilot V2 插件骨架，用来对接 `clouddrive-mini` 里的 `moviepilot-s
 - `server_url`: `clouddrive-mini` 地址，例如 `http://192.168.9.16:8765`
 - `token`: `moviepilot-storage` 插件使用的桥接 token
 - `root_key`: 默认使用的挂载根目录，可留空
-- `movie_dir`: 电影分类目录名
-- `tv_dir`: 剧集分类目录名
-- `anime_dir`: 动漫分类目录名
+
+目录归类继续使用 MoviePilot 自身的目录配置；桥接插件不额外维护电影 / 剧集 / 动漫目录。需要指定目标子目录时，在调用 `resolve`、`upload-probe` 或 `transfer_file(...)` 时传入 `sub_path`。
 
 ## 提供的插件 API
 

@@ -1,15 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import requests
-
-
-DEFAULT_MEDIA_DIRS = {
-    "movie": "Movies",
-    "tv": "TV Shows",
-    "anime": "Anime",
-}
 
 
 def normalize_plugin_config(config: dict[str, Any]) -> dict[str, Any]:
@@ -19,11 +12,6 @@ def normalize_plugin_config(config: dict[str, Any]) -> dict[str, Any]:
         "server_url": str(config.get("server_url", "") or "").strip().rstrip("/"),
         "token": str(config.get("token", "") or "").strip(),
         "root_key": str(config.get("root_key", "") or "").strip(),
-        "media_dirs": {
-            "movie": str(config.get("movie_dir", DEFAULT_MEDIA_DIRS["movie"]) or DEFAULT_MEDIA_DIRS["movie"]).strip(),
-            "tv": str(config.get("tv_dir", DEFAULT_MEDIA_DIRS["tv"]) or DEFAULT_MEDIA_DIRS["tv"]).strip(),
-            "anime": str(config.get("anime_dir", DEFAULT_MEDIA_DIRS["anime"]) or DEFAULT_MEDIA_DIRS["anime"]).strip(),
-        },
     }
 
 
@@ -34,14 +22,12 @@ class CloudDriveStorageBridgeClient:
         server_url: str,
         token: str,
         root_key: str = "",
-        media_dirs: Dict[str, str] | None = None,
         timeout_seconds: float = 20.0,
         upload_timeout_seconds: float = 7200.0,
     ) -> None:
         self.server_url = str(server_url or "").strip().rstrip("/")
         self.token = str(token or "").strip()
         self.root_key = str(root_key or "").strip()
-        self.media_dirs = dict(media_dirs or DEFAULT_MEDIA_DIRS)
         self.timeout_seconds = float(timeout_seconds or 20.0)
         self.upload_timeout_seconds = float(upload_timeout_seconds or 7200.0)
 
@@ -86,8 +72,6 @@ class CloudDriveStorageBridgeClient:
 
     def resolve_storage(self, payload: dict[str, Any]) -> dict[str, Any]:
         merged = self._merge_defaults(payload)
-        if self.media_dirs:
-            merged.setdefault("media_dirs", dict(self.media_dirs))
         return self._request("POST", "resolve", merged)
 
     def probe_storage(self, payload: dict[str, Any]) -> dict[str, Any]:
