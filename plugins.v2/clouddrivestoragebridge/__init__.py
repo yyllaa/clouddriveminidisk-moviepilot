@@ -129,6 +129,8 @@ class CloudDriveStorageBridge(_PluginBase):
             "list_files": self.list_files,
             "any_files": self.any_files,
             "upload_file": self.upload_file,
+            "delete_file": self.delete_file,
+            "rename_file": self.rename_file,
             "create_folder": self.create_folder,
             "exists": self.exists,
             "get_item": self.get_item,
@@ -441,6 +443,33 @@ class CloudDriveStorageBridge(_PluginBase):
             self._remember_error(exc)
             return None
 
+    def delete_file(self, fileitem: FileItem) -> bool | None:
+        if getattr(fileitem, "storage", "") != self._disk_name:
+            return None
+        try:
+            response = self._client().delete_entry({"sub_path": self._to_storage_sub_path(getattr(fileitem, "path", "/"))})
+            self._last_error = ""
+            return bool(response.get("deleted"))
+        except Exception as exc:
+            self._remember_error(exc)
+            return False
+
+    def rename_file(self, fileitem: FileItem, name: str) -> bool | None:
+        if getattr(fileitem, "storage", "") != self._disk_name:
+            return None
+        try:
+            response = self._client().rename_entry(
+                {
+                    "sub_path": self._to_storage_sub_path(getattr(fileitem, "path", "/")),
+                    "new_name": str(name or "").strip(),
+                }
+            )
+            self._last_error = ""
+            return bool(response.get("renamed"))
+        except Exception as exc:
+            self._remember_error(exc)
+            return False
+
     def exists(self, fileitem: FileItem) -> bool | None:
         if getattr(fileitem, "storage", "") != self._disk_name:
             return None
@@ -473,12 +502,22 @@ class CloudDriveStorageBridge(_PluginBase):
     def support_transtype(self, storage: str) -> Dict[str, str] | None:
         if storage != self._disk_name:
             return None
-        return {"copy": "复制"}
+        return {"copy": "复制", "rename": "重命名", "delete": "删除"}
 
     def storage_usage(self, storage: str) -> StorageUsage | None:
         if storage != self._disk_name:
             return None
-        return None
+        try:
+            response = self._client().usage({})
+            self._last_error = ""
+            usage_payload = response.get("usage", {}) if isinstance(response.get("usage"), dict) else {}
+            return StorageUsage(
+                total=usage_payload.get("total", 0),
+                available=usage_payload.get("available", 0),
+            )
+        except Exception as exc:
+            self._remember_error(exc)
+            return None
 
     def transfer_file(
         self,
