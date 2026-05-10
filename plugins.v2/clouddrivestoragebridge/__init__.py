@@ -48,7 +48,7 @@ class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
     plugin_desc = "连接 clouddrive-mini 的挂载目录，为 MoviePilot 提供可选存储路径和直传能力。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "0.3.0"
+    plugin_version = "0.3.1"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
@@ -96,7 +96,7 @@ class CloudDriveStorageBridge(_PluginBase):
             {
                 "path": "/roots",
                 "endpoint": self.api_roots,
-                "methods": ["GET"],
+                "methods": ["GET", "POST"],
                 "auth": "bear",
                 "summary": "读取 CloudDrive 挂载根目录",
                 "description": "从 clouddrive-mini 的内置存储接口读取可用挂载根目录。",
@@ -367,7 +367,7 @@ class CloudDriveStorageBridge(_PluginBase):
     def _remember_error(self, error: Exception) -> None:
         self._last_error = str(error or "").strip() or "unknown error"
 
-    def api_roots(self) -> dict:
+    def api_roots(self, body: Dict[str, Any] | None = None) -> dict:
         try:
             payload = self._client().list_roots()
             self._last_error = ""
