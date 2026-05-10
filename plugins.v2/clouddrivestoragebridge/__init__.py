@@ -82,6 +82,7 @@ class CloudDriveStorageBridge(_PluginBase):
         self._last_error = ""
         self._last_roots = []
         self._last_transfer = {}
+        self._refresh_roots_snapshot()
 
     def get_state(self) -> bool:
         return self._enabled
@@ -307,6 +308,16 @@ class CloudDriveStorageBridge(_PluginBase):
 
     def stop_service(self):
         pass
+
+    def _refresh_roots_snapshot(self) -> None:
+        if not self._enabled or not self._server_url:
+            return
+        try:
+            payload = self._client().list_roots()
+            self._last_error = ""
+            self._last_roots = list(payload.get("roots", []) or [])
+        except Exception as exc:
+            self._remember_error(exc)
 
     @eventmanager.register(ChainEventType.StorageOperSelection)
     def storage_oper_selection(self, event: Event) -> None:
