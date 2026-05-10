@@ -1,53 +1,79 @@
-# CloudDrive MoviePilot Bridge
+# CloudDriveStorageBridge
 
-这个仓库现在用于保存 `clouddrive-mini` 和 `MoviePilot` 之间的存储桥接源码，目标是让 MoviePilot 能把文件通过 `clouddrive-mini` 直传到已经挂载好的云盘，而不是先落到本地缓存目录。
+MoviePilot V2 插件骨架，用来对接 `clouddrive-mini` 里的 `moviepilot-storage` 桥接插件。
 
-## 仓库结构
+## 作用
 
-- `package.v2.json`
-  - MoviePilot 插件市场元数据
-- `plugins.v2/clouddrivestoragebridge/`
-  - MoviePilot V2 插件
-  - 负责读取可用根目录、解析保存路径、执行上传预检查，并把文件流直传到 `clouddrive-mini`
-- `clouddrive-mini/storage/plugins/moviepilot-storage/`
-  - `clouddrive-mini` 侧桥接插件
-  - 负责暴露挂载根目录、路径解析、写入探测、直传准备和秒传预检查
-- `icons/Cloudrive_A.png`
-  - MoviePilot 插件图标
+- 从 `clouddrive-mini` 读取已经挂载好的云盘根目录
+- 按 MoviePilot 传入的子路径解析目标保存位置
+- 在 MoviePilot 侧发起目录可写性探测
+- 在真正上传前先做 `upload-probe`
+- 需要上传文件内容时，走 `clouddrive-mini` 的直传路由，不经过 MoviePilot 插件 HTTP 上传缓冲
 
-## 当前能力
+## 依赖前提
 
-- 读取 `clouddrive-mini` 已挂载根目录
-- 按电影 / 剧集 / 动漫规则解析目标路径
-- 上传前先做 `upload-probe`
-- 命中秒传时直接完成，不重复上传内容
-- 需要上传时走已知大小流式直传，避免回退到 `clouddrive-mini` 本地上传缓存目录
+1. `clouddrive-mini` 已启用 `moviepilot-storage` 插件
+2. 该插件已配置 `token`
+3. MoviePilot 能访问 `clouddrive-mini` 的 HTTP 地址
 
-## 重要说明
+## 目录放置
 
-这份仓库保存的是桥接插件源码。
+把本目录复制到 `MoviePilot-Plugins/plugins.v2/clouddrivestoragebridge/`
 
-直传数据面依赖 `clouddrive-mini` 主项目里的对应服务端接入，包括本地已经完成的：
+主类名是 `CloudDriveStorageBridge`，目录名为其小写形式，符合 V2 规范。
 
-- `backend/app/web_server.py`
-- `backend/app/web_server_builtin_routes.py`
+## package.v2.json 示例
 
-也就是说，MoviePilot 侧插件和 `moviepilot-storage` 插件可以直接从这里取，但要完整启用 50G 级文件直传，仍需要把上述主项目改动合并到你的 `clouddrive-mini` 运行环境中。
+```json
+{
+  "CloudDriveStorageBridge": {
+    "name": "CloudDrive 存储桥接",
+    "description": "连接 clouddrive-mini 挂载目录，为 MoviePilot 提供可选存储路径和直传能力。",
+    "labels": "存储,云盘,桥接",
+    "version": "0.1.0",
+    "icon": "Cloudrive_A.png",
+    "author": "yyllaa",
+    "level": 1
+  }
+}
+```
 
-## MoviePilot 安装
+## 插件配置
 
-把下面两项放进 `MoviePilot-Plugins` 仓库：
+- `server_url`: `clouddrive-mini` 地址，例如 `http://192.168.9.16:8765`
+- `token`: `moviepilot-storage` 插件使用的桥接 token
+- `root_key`: 默认使用的挂载根目录，可留空
 
-- `package.v2.json`
-- `plugins.v2/clouddrivestoragebridge/`
+目录归类继续使用 MoviePilot 自身的目录配置；桥接插件不额外维护电影 / 剧集 / 动漫目录。需要指定目标子目录时，在调用 `resolve`、`upload-probe` 或 `transfer_file(...)` 时传入 `sub_path`。
 
-然后在 MoviePilot 里安装 `CloudDrive 存储桥接` 插件并配置：
+## 提供的插件 API
 
-- `server_url`
-- `token`
-- `root_key`（可选）
-- `movie_dir` / `tv_dir` / `anime_dir`
+- `GET /api/v1/plugin/CloudDriveStorageBridge/roots`
+- `POST /api/v1/plugin/CloudDriveStorageBridge/resolve`
+- `POST /api/v1/plugin/CloudDriveStorageBridge/probe`
+- `POST /api/v1/plugin/CloudDriveStorageBridge/upload-probe`
 
-## clouddrive-mini 安装
+这些接口用于 MoviePilot 前端、工作流或后续宿主扩展调用。
 
-把 `clouddrive-mini/storage/plugins/moviepilot-storage/` 放入你的 `clouddrive-mini` 插件目录，并配置桥接 token。
+## 直传说明
+
+不要在 MoviePilot 插件 API 上再额外挂一个大文件上传入口。那样文件会先经过 MoviePilot 端的请求体缓冲，50G 级别文件不合适。
+
+正确用法是：
+
+1. 先调 `upload-probe`
+2. 如果命中秒传，直接结束
+3. 如果需要上传，再从宿主侧调用 `CloudDriveStorageBridge.transfer_file(...)`
+4. `transfer_file(...)` 会把文件流直接转发到 `clouddrive-mini` 的 `/api/public/moviepilot-storage/upload-stream`
+
+如果 MoviePilot 宿主侧拿到的是一个已经下载到本地的临时文件路径，可以直接调用：
+
+- `CloudDriveStorageBridge.transfer_local_file(local_path, payload=..., run_probe=True)`
+
+这样宿主不需要自己处理文件打开、文件大小统计和流转发。
+
+这样可以保持：
+
+- 不落 `clouddrive-mini` 本地上传缓存目录
+- 不回退到插件 body 整包读取
+- 仅在 provider 支持 `known_size_stream` 时放行直传
