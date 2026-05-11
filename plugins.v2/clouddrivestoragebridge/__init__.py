@@ -49,7 +49,7 @@ class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
     plugin_desc = "连接 clouddrive-mini，并在 MoviePilot 中以原生存储方式展示挂载云盘。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "14.0"
+    plugin_version = "15.0"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
@@ -332,19 +332,56 @@ class CloudDriveStorageBridge(_PluginBase):
     def stop_service(self):
         pass
 
+    def _hydrate_runtime_state(self) -> None:
+        getter = getattr(self, "get_config", None)
+        if not callable(getter):
+            return
+        try:
+            persisted = getter() or {}
+        except Exception:
+            return
+        if not isinstance(persisted, dict):
+            return
+        config = normalize_plugin_config(persisted)
+        if not any(
+            [
+                config.get("enabled"),
+                config.get("server_url"),
+                config.get("username"),
+                config.get("password"),
+                config.get("root_key"),
+            ]
+        ):
+            return
+        self._enabled = bool(config.get("enabled"))
+        self._server_url = str(config.get("server_url", "") or "").strip()
+        self._username = str(config.get("username", "") or "").strip()
+        self._password = str(config.get("password", "") or "").strip()
+        self._root_key = str(config.get("root_key", "") or "").strip()
+        self.__class__._shared_enabled = self._enabled
+        self.__class__._shared_server_url = self._server_url
+        self.__class__._shared_username = self._username
+        self.__class__._shared_password = self._password
+        self.__class__._shared_root_key = self._root_key
+
     def _effective_enabled(self) -> bool:
+        self._hydrate_runtime_state()
         return bool(self._enabled or self.__class__._shared_enabled)
 
     def _effective_server_url(self) -> str:
+        self._hydrate_runtime_state()
         return str(self._server_url or self.__class__._shared_server_url or "").strip()
 
     def _effective_username(self) -> str:
+        self._hydrate_runtime_state()
         return str(self._username or self.__class__._shared_username or "").strip()
 
     def _effective_password(self) -> str:
+        self._hydrate_runtime_state()
         return str(self._password or self.__class__._shared_password or "")
 
     def _effective_root_key(self) -> str:
+        self._hydrate_runtime_state()
         return str(self._root_key or self.__class__._shared_root_key or "").strip()
 
     def _current_last_error(self) -> str:
