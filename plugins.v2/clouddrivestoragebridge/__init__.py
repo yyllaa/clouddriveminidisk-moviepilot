@@ -50,7 +50,7 @@ class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
     plugin_desc = "连接 clouddrive-mini，并在 MoviePilot 中以原生存储方式展示挂载云盘。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "16.0"
+    plugin_version = "17.0"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
@@ -76,7 +76,15 @@ class CloudDriveStorageBridge(_PluginBase):
     _shared_last_transfer: Dict[str, Any] = {}
 
     def init_plugin(self, config: dict | None = None):
+        raw_config = config
         config = normalize_plugin_config(config or {})
+        if raw_config is not None:
+            updater = getattr(self, "update_config", None)
+            if callable(updater):
+                try:
+                    updater(config)
+                except Exception:
+                    pass
         storage_helper = StorageHelper()
         existing = storage_helper.get_storagies() if hasattr(storage_helper, "get_storagies") else []
         if not any(
