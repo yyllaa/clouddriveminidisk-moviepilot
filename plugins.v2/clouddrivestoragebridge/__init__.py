@@ -49,7 +49,7 @@ class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
     plugin_desc = "连接 clouddrive-mini，并在 MoviePilot 中以原生存储方式展示挂载云盘。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "0.6.1"
+    plugin_version = "0.7.0"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
