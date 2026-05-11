@@ -49,7 +49,7 @@ class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
     plugin_desc = "连接 clouddrive-mini，并在 MoviePilot 中以原生存储方式展示挂载云盘。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "0.6.0"
+    plugin_version = "0.6.1"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
@@ -65,6 +65,14 @@ class CloudDriveStorageBridge(_PluginBase):
     _last_error = ""
     _last_roots: List[Dict[str, Any]] = []
     _last_transfer: Dict[str, Any] = {}
+    _shared_enabled = False
+    _shared_server_url = ""
+    _shared_username = ""
+    _shared_password = ""
+    _shared_root_key = ""
+    _shared_last_error = ""
+    _shared_last_roots: List[Dict[str, Any]] = []
+    _shared_last_transfer: Dict[str, Any] = {}
 
     def init_plugin(self, config: dict | None = None):
         config = normalize_plugin_config(config or {})
@@ -86,6 +94,14 @@ class CloudDriveStorageBridge(_PluginBase):
         self._last_error = ""
         self._last_roots = []
         self._last_transfer = {}
+        self.__class__._shared_enabled = self._enabled
+        self.__class__._shared_server_url = self._server_url
+        self.__class__._shared_username = self._username
+        self.__class__._shared_password = self._password
+        self.__class__._shared_root_key = self._root_key
+        self.__class__._shared_last_error = ""
+        self.__class__._shared_last_roots = []
+        self.__class__._shared_last_transfer = {}
         self._refresh_roots_snapshot()
 
     def get_state(self) -> bool:
@@ -237,15 +253,15 @@ class CloudDriveStorageBridge(_PluginBase):
         }
 
     def get_page(self) -> List[dict]:
-        message = self._last_error or "插件已就绪，MoviePilot 将在根目录下直接显示 clouddrive-mini 挂载好的云盘。"
-        message_type = "error" if self._last_error else "info"
-        root_count = len(self._last_roots)
-        transfer_mode = str(self._last_transfer.get("mode", "") or "").strip()
+        message = self._current_last_error() or "插件已就绪，MoviePilot 将在根目录下直接显示 clouddrive-mini 挂载好的云盘。"
+        message_type = "error" if self._current_last_error() else "info"
+        root_count = len(self._current_last_roots())
+        transfer_mode = str(self._current_last_transfer().get("mode", "") or "").strip()
         transfer_text = "最近还没有执行传输预检查。"
         if transfer_mode == "rapid_upload":
             transfer_text = "最近一次传输命中了秒传，无需上传文件内容。"
         elif transfer_mode == "direct_stream":
-            provider = str(self._last_transfer.get("provider", "") or "").strip() or "unknown"
+            provider = str(self._current_last_transfer().get("provider", "") or "").strip() or "unknown"
             transfer_text = f"最近一次传输走的是直传链路，provider={provider}。"
         rows = [
             {
@@ -315,19 +331,57 @@ class CloudDriveStorageBridge(_PluginBase):
     def stop_service(self):
         pass
 
+    def _effective_enabled(self) -> bool:
+        return bool(self._enabled or self.__class__._shared_enabled)
+
+    def _effective_server_url(self) -> str:
+        return str(self._server_url or self.__class__._shared_server_url or "").strip()
+
+    def _effective_username(self) -> str:
+        return str(self._username or self.__class__._shared_username or "").strip()
+
+    def _effective_password(self) -> str:
+        return str(self._password or self.__class__._shared_password or "")
+
+    def _effective_root_key(self) -> str:
+        return str(self._root_key or self.__class__._shared_root_key or "").strip()
+
+    def _current_last_error(self) -> str:
+        return str(self._last_error or self.__class__._shared_last_error or "").strip()
+
+    def _current_last_roots(self) -> List[Dict[str, Any]]:
+        return list(self._last_roots or self.__class__._shared_last_roots or [])
+
+    def _current_last_transfer(self) -> Dict[str, Any]:
+        return dict(self._last_transfer or self.__class__._shared_last_transfer or {})
+
+    def _store_last_error(self, value: str) -> None:
+        self._last_error = str(value or "").strip()
+        self.__class__._shared_last_error = self._last_error
+
+    def _store_last_roots(self, roots: List[Dict[str, Any]]) -> None:
+        normalized = list(roots or [])
+        self._last_roots = normalized
+        self.__class__._shared_last_roots = list(normalized)
+
+    def _store_last_transfer(self, payload: Dict[str, Any]) -> None:
+        normalized = dict(payload or {})
+        self._last_transfer = normalized
+        self.__class__._shared_last_transfer = dict(normalized)
+
     def _refresh_roots_snapshot(self) -> None:
-        if not self._enabled or not self._server_url:
+        if not self._effective_enabled() or not self._effective_server_url():
             return
         try:
             payload = self._client().list_roots()
-            self._last_error = ""
-            self._last_roots = list(payload.get("roots", []) or [])
+            self._store_last_error("")
+            self._store_last_roots(list(payload.get("roots", []) or []))
         except Exception as exc:
             self._remember_error(exc)
 
     @eventmanager.register(ChainEventType.StorageOperSelection)
     def storage_oper_selection(self, event: Event) -> None:
-        if not self._enabled:
+        if not self._effective_enabled():
             return
         event_data: StorageOperSelectionEventData = event.event_data
         if getattr(event_data, "storage", "") == self._disk_name:
@@ -335,10 +389,10 @@ class CloudDriveStorageBridge(_PluginBase):
 
     def _client(self) -> CloudDriveStorageBridgeClient:
         return CloudDriveStorageBridgeClient(
-            server_url=self._server_url,
-            username=self._username,
-            password=self._password,
-            root_key=self._root_key,
+            server_url=self._effective_server_url(),
+            username=self._effective_username(),
+            password=self._effective_password(),
+            root_key=self._effective_root_key(),
         )
 
     def _to_storage_sub_path(self, path_value: Any) -> str:
@@ -360,9 +414,9 @@ class CloudDriveStorageBridge(_PluginBase):
         )
 
     def _root_mounts(self) -> List[Dict[str, Any]]:
-        if not self._last_roots and self._enabled and self._server_url:
+        if not self._current_last_roots() and self._effective_enabled() and self._effective_server_url():
             self._refresh_roots_snapshot()
-        roots = list(self._last_roots or [])
+        roots = self._current_last_roots()
         seen: Dict[str, int] = {}
         mounts: List[Dict[str, Any]] = []
         for root in roots:
@@ -457,13 +511,13 @@ class CloudDriveStorageBridge(_PluginBase):
         )
 
     def _remember_error(self, error: Exception) -> None:
-        self._last_error = str(error or "").strip() or "unknown error"
+        self._store_last_error(str(error or "").strip() or "unknown error")
 
     def api_roots(self, body: Dict[str, Any] | None = None) -> dict:
         try:
             payload = self._client().list_roots()
-            self._last_error = ""
-            self._last_roots = list(payload.get("roots", []) or [])
+            self._store_last_error("")
+            self._store_last_roots(list(payload.get("roots", []) or []))
             return payload
         except Exception as exc:
             self._remember_error(exc)
@@ -472,7 +526,7 @@ class CloudDriveStorageBridge(_PluginBase):
     def api_resolve(self, body: Dict[str, Any]) -> dict:
         try:
             payload = self._client().resolve_storage(body or {})
-            self._last_error = ""
+            self._store_last_error("")
             return payload
         except Exception as exc:
             self._remember_error(exc)
@@ -481,7 +535,7 @@ class CloudDriveStorageBridge(_PluginBase):
     def api_probe(self, body: Dict[str, Any]) -> dict:
         try:
             payload = self._client().probe_storage(body or {})
-            self._last_error = ""
+            self._store_last_error("")
             return payload
         except Exception as exc:
             self._remember_error(exc)
@@ -490,7 +544,7 @@ class CloudDriveStorageBridge(_PluginBase):
     def api_upload_probe(self, body: Dict[str, Any]) -> dict:
         try:
             payload = self._client().upload_probe(body or {})
-            self._last_error = ""
+            self._store_last_error("")
             return payload
         except Exception as exc:
             self._remember_error(exc)
@@ -660,7 +714,7 @@ class CloudDriveStorageBridge(_PluginBase):
     def storage_usage(self, storage: str) -> StorageUsage | None:
         if storage != self._disk_name:
             return None
-        mount = self._find_mount_by_root_key(self._root_key)
+        mount = self._find_mount_by_root_key(self._effective_root_key())
         if mount is None:
             mounts = self._root_mounts()
             if not mounts:
@@ -668,7 +722,7 @@ class CloudDriveStorageBridge(_PluginBase):
             mount = mounts[0]
         try:
             response = self._client().usage({"root_key": mount["root_key"]})
-            self._last_error = ""
+            self._store_last_error("")
             usage_payload = response.get("usage", {}) if isinstance(response.get("usage"), dict) else {}
             return StorageUsage(
                 total=usage_payload.get("total", 0),
@@ -694,23 +748,23 @@ class CloudDriveStorageBridge(_PluginBase):
                 upload_payload = probe_payload.get("upload", {}) if isinstance(probe_payload.get("upload"), dict) else {}
                 result_payload = upload_payload.get("result", {}) if isinstance(upload_payload.get("result"), dict) else {}
                 if bool(result_payload.get("rapid_upload")) and not bool(result_payload.get("requires_upload", True)):
-                    self._last_error = ""
-                    self._last_transfer = {
+                    self._store_last_error("")
+                    self._store_last_transfer({
                         "mode": "rapid_upload",
                         "payload": probe_payload,
-                    }
+                    })
                     return {
                         "status": "ok",
                         "transfer_strategy": "rapid_upload",
                         "probe": probe_payload,
                     }
             response = client.stream_upload(stream, file_size=file_size, payload=merged_payload)
-            self._last_error = ""
-            self._last_transfer = {
+            self._store_last_error("")
+            self._store_last_transfer({
                 "mode": "direct_stream",
                 "provider": str(response.get("provider", "") or "").strip(),
                 "payload": response,
-            }
+            })
             return response
         except Exception as exc:
             self._remember_error(exc)
