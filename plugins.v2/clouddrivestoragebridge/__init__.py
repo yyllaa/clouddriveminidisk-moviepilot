@@ -49,7 +49,7 @@ class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
     plugin_desc = "连接 clouddrive-mini，并在 MoviePilot 中以原生存储方式展示挂载云盘。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "0.7.0"
+    plugin_version = "0.8.0"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
@@ -156,6 +156,7 @@ class CloudDriveStorageBridge(_PluginBase):
             "delete_file": self.delete_file,
             "rename_file": self.rename_file,
             "create_folder": self.create_folder,
+            "get_folder": self.get_folder,
             "exists": self.exists,
             "get_item": self.get_item,
             "get_file_item": self.get_file_item,
@@ -613,6 +614,22 @@ class CloudDriveStorageBridge(_PluginBase):
         except Exception as exc:
             self._remember_error(exc)
             return None
+
+    def get_folder(self, fileitem: FileItem, name: str | None = None) -> FileItem | None:
+        if getattr(fileitem, "storage", "") != self._disk_name:
+            return None
+        folder_name = str(name or "").strip().strip("/")
+        if not folder_name:
+            item = self.get_item(fileitem)
+            if item is not None and getattr(item, "type", "") == "dir":
+                return item
+            return None
+        base_path = str(getattr(fileitem, "path", "/") or "/").rstrip("/") or "/"
+        target_path = f"{base_path}/{folder_name}" if base_path != "/" else f"/{folder_name}"
+        existing = self.get_file_item(self._disk_name, Path(target_path))
+        if existing is not None and getattr(existing, "type", "") == "dir":
+            return existing
+        return self.create_folder(fileitem, folder_name)
 
     def upload_file(self, fileitem: FileItem, path: Path, new_name: str | None = None) -> FileItem | None:
         if getattr(fileitem, "storage", "") != self._disk_name:
