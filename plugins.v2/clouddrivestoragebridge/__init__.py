@@ -49,7 +49,7 @@ class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
     plugin_desc = "连接 clouddrive-mini，并在 MoviePilot 中以原生存储方式展示挂载云盘。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "11.0"
+    plugin_version = "14.0"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
@@ -511,6 +511,46 @@ class CloudDriveStorageBridge(_PluginBase):
             modify_time=payload.get("modify_time"),
         )
 
+    def _build_uploaded_file_item(self, mount: Dict[str, Any], uploaded_path: str, local_path: Path) -> FileItem:
+        virtual_path = f"/{mount['name']}/{uploaded_path}" if uploaded_path else f"/{mount['name']}"
+        filename = Path(virtual_path).name or local_path.name
+        suffix = Path(filename).suffix
+        extension = suffix[1:] if suffix else None
+        parent_path = str(Path(virtual_path).parent).replace("\\", "/")
+        if parent_path == ".":
+            parent_path = "/"
+        try:
+            stat = local_path.stat()
+            size = int(stat.st_size)
+            modify_time = int(stat.st_mtime)
+        except Exception:
+            size = None
+            modify_time = None
+        return FileItem(
+            storage=self._disk_name,
+            fileid=virtual_path,
+            parent_fileid=parent_path,
+            name=filename,
+            basename=Path(filename).stem,
+            extension=extension,
+            type="file",
+            path=virtual_path,
+            size=size,
+            modify_time=modify_time,
+        )
+
+    def _normalize_uploaded_relative_path(self, mount: Dict[str, Any], uploaded_path: str) -> str:
+        normalized = self._to_storage_sub_path(uploaded_path)
+        mount_name = str(mount.get("name", "") or "").strip().strip("/")
+        if not mount_name:
+            return normalized
+        if normalized == mount_name:
+            return ""
+        prefix = f"{mount_name}/"
+        if normalized.startswith(prefix):
+            return normalized[len(prefix):]
+        return normalized
+
     def _remember_error(self, error: Exception) -> None:
         self._store_last_error(str(error or "").strip() or "unknown error")
 
@@ -660,8 +700,14 @@ class CloudDriveStorageBridge(_PluginBase):
             response = self.transfer_local_file(str(path), payload=payload, run_probe=True)
             self._last_error = ""
             uploaded_path = "/".join(part for part in [payload["sub_path"], filename] if part)
+            uploaded_path = self._normalize_uploaded_relative_path(mount, uploaded_path)
+            if not response:
+                return None
             virtual_path = f"/{mount['name']}/{uploaded_path}" if uploaded_path else f"/{mount['name']}"
-            return self.get_file_item(self._disk_name, Path(virtual_path)) if response else None
+            uploaded_item = self.get_file_item(self._disk_name, Path(virtual_path))
+            if uploaded_item is not None:
+                return uploaded_item
+            return self._build_uploaded_file_item(mount, uploaded_path, path)
         except Exception as exc:
             self._remember_error(exc)
             return None
