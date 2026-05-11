@@ -49,7 +49,7 @@ class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
     plugin_desc = "连接 clouddrive-mini，并在 MoviePilot 中以原生存储方式展示挂载云盘。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "10.0"
+    plugin_version = "11.0"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
@@ -666,6 +666,9 @@ class CloudDriveStorageBridge(_PluginBase):
             self._remember_error(exc)
             return None
 
+    def upload(self, fileitem: FileItem, path: Path, new_name: str | None = None) -> FileItem | None:
+        return self.upload_file(fileitem, path, new_name=new_name)
+
     def delete_file(self, fileitem: FileItem) -> bool | None:
         if getattr(fileitem, "storage", "") != self._disk_name:
             return None
@@ -679,6 +682,9 @@ class CloudDriveStorageBridge(_PluginBase):
         except Exception as exc:
             self._remember_error(exc)
             return False
+
+    def delete(self, fileitem: FileItem) -> bool | None:
+        return self.delete_file(fileitem)
 
     def rename_file(self, fileitem: FileItem, name: str) -> bool | None:
         if getattr(fileitem, "storage", "") != self._disk_name:
@@ -699,6 +705,9 @@ class CloudDriveStorageBridge(_PluginBase):
         except Exception as exc:
             self._remember_error(exc)
             return False
+
+    def rename(self, fileitem: FileItem, name: str) -> bool | None:
+        return self.rename_file(fileitem, name)
 
     def exists(self, fileitem: FileItem) -> bool | None:
         if getattr(fileitem, "storage", "") != self._disk_name:
