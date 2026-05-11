@@ -49,7 +49,7 @@ class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
     plugin_desc = "连接 clouddrive-mini，并在 MoviePilot 中以原生存储方式展示挂载云盘。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "0.8.0"
+    plugin_version = "9.02"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
@@ -615,7 +615,22 @@ class CloudDriveStorageBridge(_PluginBase):
             self._remember_error(exc)
             return None
 
-    def get_folder(self, fileitem: FileItem, name: str | None = None) -> FileItem | None:
+    def get_folder(self, fileitem: FileItem | Path, name: str | None = None) -> FileItem | None:
+        if isinstance(fileitem, Path):
+            target_path = fileitem
+            folder_name = str(name or "").strip().strip("/")
+            if folder_name:
+                target_path = target_path / folder_name
+            existing = self.get_file_item(self._disk_name, target_path)
+            if existing is not None and getattr(existing, "type", "") == "dir":
+                return existing
+            parent_path = target_path.parent
+            if str(parent_path) == str(target_path):
+                return None
+            parent_item = self.get_folder(parent_path)
+            if parent_item is None:
+                return None
+            return self.create_folder(parent_item, target_path.name)
         if getattr(fileitem, "storage", "") != self._disk_name:
             return None
         folder_name = str(name or "").strip().strip("/")
@@ -623,13 +638,11 @@ class CloudDriveStorageBridge(_PluginBase):
             item = self.get_item(fileitem)
             if item is not None and getattr(item, "type", "") == "dir":
                 return item
-            return None
+            path_value = Path(str(getattr(fileitem, "path", "/")) or "/")
+            return self.get_folder(path_value)
         base_path = str(getattr(fileitem, "path", "/") or "/").rstrip("/") or "/"
-        target_path = f"{base_path}/{folder_name}" if base_path != "/" else f"/{folder_name}"
-        existing = self.get_file_item(self._disk_name, Path(target_path))
-        if existing is not None and getattr(existing, "type", "") == "dir":
-            return existing
-        return self.create_folder(fileitem, folder_name)
+        target_path = Path(f"{base_path}/{folder_name}" if base_path != "/" else f"/{folder_name}")
+        return self.get_folder(target_path)
 
     def upload_file(self, fileitem: FileItem, path: Path, new_name: str | None = None) -> FileItem | None:
         if getattr(fileitem, "storage", "") != self._disk_name:
@@ -692,7 +705,9 @@ class CloudDriveStorageBridge(_PluginBase):
             return None
         return self.get_item(fileitem) is not None
 
-    def get_item(self, fileitem: FileItem) -> FileItem | None:
+    def get_item(self, fileitem: FileItem | Path) -> FileItem | None:
+        if isinstance(fileitem, Path):
+            return self.get_file_item(self._disk_name, fileitem)
         if getattr(fileitem, "storage", "") != self._disk_name:
             return None
         return self.get_file_item(self._disk_name, Path(str(getattr(fileitem, "path", "/")) or "/"))
