@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any, BinaryIO, Dict, List, Tuple
 
 from app.plugins import _PluginBase
+
 try:
     from app.core.event import Event, eventmanager
     from app.helper.storage import StorageHelper
@@ -46,9 +47,9 @@ from .runtime import CloudDriveStorageBridgeClient, normalize_plugin_config
 
 class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
-    plugin_desc = "连接 clouddrive-mini 的挂载目录，为 MoviePilot 提供可选存储路径和直传能力。"
+    plugin_desc = "连接 clouddrive-mini，并在 MoviePilot 中以原生存储方式展示挂载云盘。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "0.5.0"
+    plugin_version = "0.6.0"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
@@ -65,11 +66,14 @@ class CloudDriveStorageBridge(_PluginBase):
     _last_roots: List[Dict[str, Any]] = []
     _last_transfer: Dict[str, Any] = {}
 
-    def init_plugin(self, config: dict = None):
+    def init_plugin(self, config: dict | None = None):
         config = normalize_plugin_config(config or {})
         storage_helper = StorageHelper()
         existing = storage_helper.get_storagies() if hasattr(storage_helper, "get_storagies") else []
-        if not any(getattr(item, "type", "") == self._disk_name and getattr(item, "name", "") == self._disk_name for item in existing or []):
+        if not any(
+            getattr(item, "type", "") == self._disk_name and getattr(item, "name", "") == self._disk_name
+            for item in existing or []
+        ):
             try:
                 storage_helper.add_storage(storage=self._disk_name, name=self._disk_name, conf={})
             except Exception:
@@ -100,7 +104,7 @@ class CloudDriveStorageBridge(_PluginBase):
                 "methods": ["GET", "POST"],
                 "auth": "bear",
                 "summary": "读取 CloudDrive 挂载根目录",
-                "description": "从 clouddrive-mini 的内置存储接口读取可用挂载根目录。",
+                "description": "从 clouddrive-mini 读取当前可用的挂载根目录。",
             },
             {
                 "path": f"{api_prefix}/resolve",
@@ -124,7 +128,7 @@ class CloudDriveStorageBridge(_PluginBase):
                 "methods": ["POST"],
                 "auth": "bear",
                 "summary": "预检查直传任务",
-                "description": "检查是否可秒传，或是否允许进入直传链路。",
+                "description": "检查是否命中秒传，或者是否允许进入直传链路。",
             },
         ]
 
@@ -214,8 +218,8 @@ class CloudDriveStorageBridge(_PluginBase):
                                         "component": "VTextField",
                                         "props": {
                                             "model": "root_key",
-                                            "label": "默认根目录 Root Key",
-                                            "placeholder": "可留空，默认取第一个匹配项",
+                                            "label": "默认 Root Key（可选）",
+                                            "placeholder": "仅用于兼容旧路径或指定默认容量查询目标",
                                         },
                                     }
                                 ],
@@ -233,7 +237,7 @@ class CloudDriveStorageBridge(_PluginBase):
         }
 
     def get_page(self) -> List[dict]:
-        message = self._last_error or "插件已就绪，可通过插件 API 读取根目录、解析路径并执行直传预检查。"
+        message = self._last_error or "插件已就绪，MoviePilot 将在根目录下直接显示 clouddrive-mini 挂载好的云盘。"
         message_type = "error" if self._last_error else "info"
         root_count = len(self._last_roots)
         transfer_mode = str(self._last_transfer.get("mode", "") or "").strip()
@@ -257,7 +261,7 @@ class CloudDriveStorageBridge(_PluginBase):
                 "props": {
                     "type": "success",
                     "variant": "tonal",
-                    "text": f"最近一次读取到 {root_count} 个根目录。",
+                    "text": f"最近一次读取到 {root_count} 个挂载根目录。",
                 },
             },
             {
@@ -269,7 +273,8 @@ class CloudDriveStorageBridge(_PluginBase):
                 },
             },
         ]
-        if self._last_roots:
+        mounts = self._root_mounts()
+        if mounts:
             rows.append(
                 {
                     "component": "VTable",
@@ -281,7 +286,7 @@ class CloudDriveStorageBridge(_PluginBase):
                                 {
                                     "component": "tr",
                                     "content": [
-                                        {"component": "th", "text": "标签"},
+                                        {"component": "th", "text": "显示名称"},
                                         {"component": "th", "text": "模式"},
                                         {"component": "th", "text": "导出路径"},
                                     ],
@@ -294,12 +299,12 @@ class CloudDriveStorageBridge(_PluginBase):
                                 {
                                     "component": "tr",
                                     "content": [
-                                        {"component": "td", "text": str(item.get("account_label", "") or "")},
-                                        {"component": "td", "text": str(item.get("mode", "") or "")},
-                                        {"component": "td", "text": str(item.get("exported_dir", "") or "")},
+                                        {"component": "td", "text": mount["name"]},
+                                        {"component": "td", "text": str(mount["root"].get("mode", "") or "")},
+                                        {"component": "td", "text": str(mount["root"].get("exported_dir", "") or "")},
                                     ],
                                 }
-                                for item in self._last_roots[:8]
+                                for mount in mounts[:8]
                             ],
                         },
                     ],
@@ -340,11 +345,97 @@ class CloudDriveStorageBridge(_PluginBase):
         text = str(path_value or "").strip().replace("\\", "/")
         return text.strip("/")
 
-    def _to_file_item(self, payload: Dict[str, Any] | None) -> FileItem | None:
+    def _root_directory_item(self) -> FileItem:
+        return FileItem(
+            storage=self._disk_name,
+            fileid="/",
+            parent_fileid=None,
+            name=self._disk_name,
+            basename=self._disk_name,
+            extension=None,
+            type="dir",
+            path="/",
+            size=None,
+            modify_time=None,
+        )
+
+    def _root_mounts(self) -> List[Dict[str, Any]]:
+        if not self._last_roots and self._enabled and self._server_url:
+            self._refresh_roots_snapshot()
+        roots = list(self._last_roots or [])
+        seen: Dict[str, int] = {}
+        mounts: List[Dict[str, Any]] = []
+        for root in roots:
+            root_key = str(root.get("root_key", "") or "").strip()
+            base_name = str(root.get("account_label", "") or root_key or "CloudDrive").strip() or "CloudDrive"
+            seen[base_name] = seen.get(base_name, 0) + 1
+            display_name = base_name if seen[base_name] == 1 else f"{base_name} ({seen[base_name]})"
+            mounts.append(
+                {
+                    "name": display_name,
+                    "root_key": root_key,
+                    "root": root,
+                }
+            )
+        return mounts
+
+    def _mount_item(self, mount: Dict[str, Any]) -> FileItem:
+        path = f"/{mount['name']}"
+        return FileItem(
+            storage=self._disk_name,
+            fileid=str(mount.get("root_key", "") or path),
+            parent_fileid="/",
+            name=str(mount["name"]),
+            basename=str(mount["name"]),
+            extension=None,
+            type="dir",
+            path=path,
+            size=None,
+            modify_time=None,
+        )
+
+    def _find_mount_by_root_key(self, root_key: str) -> Dict[str, Any] | None:
+        normalized = str(root_key or "").strip()
+        if not normalized:
+            return None
+        for mount in self._root_mounts():
+            if str(mount.get("root_key", "") or "").strip() == normalized:
+                return mount
+        return None
+
+    def _resolve_virtual_path(self, path_value: Any) -> Tuple[str, Dict[str, Any] | None, str]:
+        normalized = str(path_value or "/").strip().replace("\\", "/")
+        normalized = normalized if normalized.startswith("/") else f"/{normalized}"
+        normalized = normalized.rstrip("/") or "/"
+        if normalized == "/":
+            return "root", None, ""
+        stripped = normalized.strip("/")
+        parts = stripped.split("/", 1)
+        mount_name = parts[0]
+        remainder = parts[1] if len(parts) > 1 else ""
+        for mount in self._root_mounts():
+            if mount["name"] == mount_name:
+                if remainder:
+                    return "entry", mount, remainder.strip("/")
+                return "mount", mount, ""
+        fallback_mount = self._find_mount_by_root_key(self._root_key)
+        if fallback_mount is None:
+            mounts = self._root_mounts()
+            if len(mounts) == 1:
+                fallback_mount = mounts[0]
+        if fallback_mount is not None:
+            return "entry", fallback_mount, stripped
+        return "missing", None, stripped
+
+    def _to_file_item(self, payload: Dict[str, Any] | None, mount: Dict[str, Any]) -> FileItem | None:
         if not isinstance(payload, dict):
             return None
         storage_path = str(payload.get("storage_path", "") or "/").strip() or "/"
-        path_for_item = storage_path if storage_path.startswith("/") else f"/{storage_path}"
+        normalized_storage_path = self._to_storage_sub_path(storage_path)
+        if normalized_storage_path:
+            path_for_item = f"/{mount['name']}/{normalized_storage_path}"
+        else:
+            path_for_item = f"/{mount['name']}"
         name = str(payload.get("name", "") or "").strip()
         file_type = str(payload.get("type", "") or "file").strip() or "file"
         suffix = Path(name).suffix if name else ""
@@ -356,8 +447,8 @@ class CloudDriveStorageBridge(_PluginBase):
             storage=self._disk_name,
             fileid=str(payload.get("exported_path", "") or path_for_item),
             parent_fileid=parent_path,
-            name=name or ("/" if path_for_item == "/" else Path(path_for_item).name),
-            basename=Path(name).stem if name else "",
+            name=name or str(mount["name"]),
+            basename=Path(name).stem if name else str(mount["name"]),
             extension=extension,
             type=file_type,
             path=path_for_item,
@@ -409,11 +500,22 @@ class CloudDriveStorageBridge(_PluginBase):
         if getattr(fileitem, "storage", "") != self._disk_name:
             return []
         try:
+            path = str(getattr(fileitem, "path", "/") or "/")
+            kind, mount, sub_path = self._resolve_virtual_path(path)
+            if kind == "root":
+                return [self._mount_item(item) for item in self._root_mounts()]
+            if kind == "missing" or mount is None:
+                return []
             if getattr(fileitem, "type", "") == "file":
                 item = self.get_item(fileitem)
                 return [item] if item else []
-            response = self._client().list_entries({"sub_path": self._to_storage_sub_path(getattr(fileitem, "path", "/"))})
-            items = [self._to_file_item(item) for item in list(response.get("items", []) or [])]
+            response = self._client().list_entries(
+                {
+                    "root_key": mount["root_key"],
+                    "sub_path": sub_path,
+                }
+            )
+            items = [self._to_file_item(item, mount) for item in list(response.get("items", []) or [])]
             file_items = [item for item in items if item is not None]
             if not recursion:
                 return file_items
@@ -445,12 +547,15 @@ class CloudDriveStorageBridge(_PluginBase):
     def create_folder(self, fileitem: FileItem, name: str) -> FileItem | None:
         if getattr(fileitem, "storage", "") != self._disk_name:
             return None
-        current = self._to_storage_sub_path(getattr(fileitem, "path", "/"))
-        sub_path = "/".join(part for part in [current, str(name or "").strip().strip("/")] if part)
+        kind, mount, sub_path = self._resolve_virtual_path(getattr(fileitem, "path", "/"))
+        if kind in {"root", "missing"} or mount is None:
+            return None
+        current = self._to_storage_sub_path(sub_path)
+        target = "/".join(part for part in [current, str(name or "").strip().strip("/")] if part)
         try:
-            response = self._client().mkdir({"sub_path": sub_path})
+            response = self._client().mkdir({"root_key": mount["root_key"], "sub_path": target})
             self._last_error = ""
-            return self._to_file_item(response.get("item"))
+            return self._to_file_item(response.get("item"), mount)
         except Exception as exc:
             self._remember_error(exc)
             return None
@@ -458,16 +563,21 @@ class CloudDriveStorageBridge(_PluginBase):
     def upload_file(self, fileitem: FileItem, path: Path, new_name: str | None = None) -> FileItem | None:
         if getattr(fileitem, "storage", "") != self._disk_name:
             return None
+        kind, mount, sub_path = self._resolve_virtual_path(getattr(fileitem, "path", "/"))
+        if kind in {"root", "missing"} or mount is None:
+            return None
         filename = str(new_name or path.name).strip()
         payload = {
-            "sub_path": self._to_storage_sub_path(getattr(fileitem, "path", "/")),
+            "root_key": mount["root_key"],
+            "sub_path": self._to_storage_sub_path(sub_path),
             "filename": filename,
         }
         try:
             response = self.transfer_local_file(str(path), payload=payload, run_probe=True)
             self._last_error = ""
             uploaded_path = "/".join(part for part in [payload["sub_path"], filename] if part)
-            return self.get_file_item(self._disk_name, Path(f"/{uploaded_path}")) if response else None
+            virtual_path = f"/{mount['name']}/{uploaded_path}" if uploaded_path else f"/{mount['name']}"
+            return self.get_file_item(self._disk_name, Path(virtual_path)) if response else None
         except Exception as exc:
             self._remember_error(exc)
             return None
@@ -475,8 +585,11 @@ class CloudDriveStorageBridge(_PluginBase):
     def delete_file(self, fileitem: FileItem) -> bool | None:
         if getattr(fileitem, "storage", "") != self._disk_name:
             return None
+        kind, mount, sub_path = self._resolve_virtual_path(getattr(fileitem, "path", "/"))
+        if kind in {"root", "mount", "missing"} or mount is None:
+            return False
         try:
-            response = self._client().delete_entry({"sub_path": self._to_storage_sub_path(getattr(fileitem, "path", "/"))})
+            response = self._client().delete_entry({"root_key": mount["root_key"], "sub_path": sub_path})
             self._last_error = ""
             return bool(response.get("deleted"))
         except Exception as exc:
@@ -486,10 +599,14 @@ class CloudDriveStorageBridge(_PluginBase):
     def rename_file(self, fileitem: FileItem, name: str) -> bool | None:
         if getattr(fileitem, "storage", "") != self._disk_name:
             return None
+        kind, mount, sub_path = self._resolve_virtual_path(getattr(fileitem, "path", "/"))
+        if kind in {"root", "mount", "missing"} or mount is None:
+            return False
         try:
             response = self._client().rename_entry(
                 {
-                    "sub_path": self._to_storage_sub_path(getattr(fileitem, "path", "/")),
+                    "root_key": mount["root_key"],
+                    "sub_path": sub_path,
                     "new_name": str(name or "").strip(),
                 }
             )
@@ -512,10 +629,17 @@ class CloudDriveStorageBridge(_PluginBase):
     def get_file_item(self, storage: str, path: Path) -> FileItem | None:
         if storage != self._disk_name:
             return None
+        kind, mount, sub_path = self._resolve_virtual_path(path.as_posix())
+        if kind == "root":
+            return self._root_directory_item()
+        if kind == "mount" and mount is not None:
+            return self._mount_item(mount)
+        if kind == "missing" or mount is None:
+            return None
         try:
-            response = self._client().get_item({"sub_path": self._to_storage_sub_path(path.as_posix())})
+            response = self._client().get_item({"root_key": mount["root_key"], "sub_path": sub_path})
             self._last_error = ""
-            return self._to_file_item(response.get("item"))
+            return self._to_file_item(response.get("item"), mount)
         except Exception as exc:
             self._remember_error(exc)
             return None
@@ -536,8 +660,14 @@ class CloudDriveStorageBridge(_PluginBase):
     def storage_usage(self, storage: str) -> StorageUsage | None:
         if storage != self._disk_name:
             return None
+        mount = self._find_mount_by_root_key(self._root_key)
+        if mount is None:
+            mounts = self._root_mounts()
+            if not mounts:
+                return None
+            mount = mounts[0]
         try:
-            response = self._client().usage({})
+            response = self._client().usage({"root_key": mount["root_key"]})
             self._last_error = ""
             usage_payload = response.get("usage", {}) if isinstance(response.get("usage"), dict) else {}
             return StorageUsage(
