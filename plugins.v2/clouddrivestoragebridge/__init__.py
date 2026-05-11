@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from os import PathLike
 from pathlib import Path
 from typing import Any, BinaryIO, Dict, List, Tuple
 
@@ -49,7 +50,7 @@ class CloudDriveStorageBridge(_PluginBase):
     plugin_name = "CloudDrive 存储桥接"
     plugin_desc = "连接 clouddrive-mini，并在 MoviePilot 中以原生存储方式展示挂载云盘。"
     plugin_icon = "Cloudrive_A.png"
-    plugin_version = "15.0"
+    plugin_version = "16.0"
     plugin_author = "yyllaa"
     author_url = "https://github.com/yyllaa/clouddriveminidisk-moviepilot"
     plugin_config_prefix = "clouddrive_storage_bridge_"
@@ -588,6 +589,9 @@ class CloudDriveStorageBridge(_PluginBase):
             return normalized[len(prefix):]
         return normalized
 
+    def _as_local_path(self, value: str | PathLike[str] | Path) -> Path:
+        return Path(value).expanduser()
+
     def _remember_error(self, error: Exception) -> None:
         self._store_last_error(str(error or "").strip() or "unknown error")
 
@@ -721,20 +725,21 @@ class CloudDriveStorageBridge(_PluginBase):
         target_path = Path(f"{base_path}/{folder_name}" if base_path != "/" else f"/{folder_name}")
         return self.get_folder(target_path)
 
-    def upload_file(self, fileitem: FileItem, path: Path, new_name: str | None = None) -> FileItem | None:
+    def upload_file(self, fileitem: FileItem, path: str | PathLike[str] | Path, new_name: str | None = None) -> FileItem | None:
         if getattr(fileitem, "storage", "") != self._disk_name:
             return None
         kind, mount, sub_path = self._resolve_virtual_path(getattr(fileitem, "path", "/"))
         if kind in {"root", "missing"} or mount is None:
             return None
-        filename = str(new_name or path.name).strip()
+        local_path = self._as_local_path(path)
+        filename = str(new_name or local_path.name).strip()
         payload = {
             "root_key": mount["root_key"],
             "sub_path": self._to_storage_sub_path(sub_path),
             "filename": filename,
         }
         try:
-            response = self.transfer_local_file(str(path), payload=payload, run_probe=True)
+            response = self.transfer_local_file(str(local_path), payload=payload, run_probe=True)
             self._last_error = ""
             uploaded_path = "/".join(part for part in [payload["sub_path"], filename] if part)
             uploaded_path = self._normalize_uploaded_relative_path(mount, uploaded_path)
@@ -744,12 +749,12 @@ class CloudDriveStorageBridge(_PluginBase):
             uploaded_item = self.get_file_item(self._disk_name, Path(virtual_path))
             if uploaded_item is not None:
                 return uploaded_item
-            return self._build_uploaded_file_item(mount, uploaded_path, path)
+            return self._build_uploaded_file_item(mount, uploaded_path, local_path)
         except Exception as exc:
             self._remember_error(exc)
             return None
 
-    def upload(self, fileitem: FileItem, path: Path, new_name: str | None = None) -> FileItem | None:
+    def upload(self, fileitem: FileItem, path: str | PathLike[str] | Path, new_name: str | None = None) -> FileItem | None:
         return self.upload_file(fileitem, path, new_name=new_name)
 
     def delete_file(self, fileitem: FileItem) -> bool | None:
